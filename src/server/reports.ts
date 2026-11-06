@@ -27,6 +27,20 @@ export const saveReportRevision = createServerFn({ method: "POST" })
 	.validator(type({ period: "string" }))
 	.handler(async ({ data }) => saveRevision(getDb(), periodOf(data.period)));
 
+// Reads one marketplace's figures for a month again, now. Amazon's month
+// takes a minute or more.
+export const readMarketplaceFigures = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			period: "string",
+			channel: "'shopify' | 'amazon' | 'ebay' | 'tiktok'",
+		}),
+	)
+	.handler(async ({ data }) => {
+		const { refreshStatement } = await import("#/reports/statements/refresh");
+		return refreshStatement(getDb(), data.channel, periodOf(data.period));
+	});
+
 export const getReportArtifact = createServerFn({ method: "GET" })
 	.validator(
 		type({ snapshotId: "number.integer > 0", name: /^[a-z-]+\.(csv|html)$/ }),

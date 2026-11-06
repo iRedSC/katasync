@@ -1,13 +1,46 @@
 import type { ReportData } from "./snapshot";
 
+type Current = Extract<ReportData, { schemaVersion: 2 }>;
+
 const fees = (orders: number, amount: number) => ({ orders, amount });
 
-export function reportDataFixture(over: Partial<ReportData> = {}): ReportData {
+export function reportDataFixture(over: Partial<Current> = {}): Current {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		kind: "sales_tax_month",
 		period: "2026-09",
-		basis: "order_date",
+		basis: "marketplace_statements",
+		statements: [
+			{
+				channel: "ebay",
+				state: "read",
+				complete: true,
+				lastError: null,
+				statement: {
+					channel: "ebay",
+					window: {
+						start: "2026-09-01T07:00:00.000Z",
+						end: "2026-10-01T07:00:00.000Z",
+						timeZone: "America/Los_Angeles",
+					},
+					netSales: 100,
+					marketplaceTax: 7,
+					sections: [
+						{
+							title: null,
+							lines: [
+								{ label: "Gross sales", amount: 100 },
+								{ label: "Selling fees", amount: -13 },
+							],
+							total: { label: "Orders (total minus fees)", amount: 87 },
+						},
+					],
+				},
+			},
+			{ channel: "shopify", state: "missing", error: null },
+			{ channel: "amazon", state: "missing", error: "Amazon answered 403" },
+			{ channel: "tiktok", state: "missing", error: null },
+		],
 		currency: "USD",
 		timeZone: "America/New_York",
 		source: "test",

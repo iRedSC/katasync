@@ -16,13 +16,21 @@ import {
 	FEE_EVIDENCE_NAME,
 	HOW_SUFFIX,
 	type RevisionMeta,
-	sourceName,
 } from "./files";
 import {
 	contributionFigure,
 	RENDERER_VERSION,
 	type ReportData,
 } from "./snapshot";
+import type { StatementResult } from "./statements/types";
+import {
+	STATEMENT_BASIS,
+	STATEMENT_NAME,
+	STATEMENT_TITLE,
+	statementCaveat,
+	statementSummary,
+	statementView,
+} from "./statements/view";
 
 const ESCAPES: Record<string, string> = {
 	"&": "&amp;",
@@ -57,9 +65,61 @@ function table(
 const section = (title: string, body: string) =>
 	`<section><h2>${escapeHtml(title)}</h2>${body}</section>`;
 
-const STYLE = `@page{size:letter;margin:0.6in}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font:10pt/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;color:#000;margin:0;padding:0.4in;background:#fff}header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #000;padding-bottom:6px}h1{font-size:17pt;margin:0}h2{font-size:12pt;margin:18px 0 4px}p{margin:4px 0}dl.totals{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}dl.totals div{border-top:4px solid #999;padding-top:4px}dl.totals dd{margin:0;font-size:15pt;font-weight:700}table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th{font-weight:600;border-bottom:1px solid #000}th,td{padding:2px 6px;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left;white-space:normal}tr.total td{border-top:1px solid #000;font-weight:700}.flag{color:#b42318;font-weight:600}footer{margin-top:20px;border-top:1px solid #999;padding-top:6px;font-size:8pt;color:#333;word-break:break-all}section{break-inside:avoid}`;
+const STYLE = `@page{size:letter;margin:0.6in}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font:10pt/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;color:#000;margin:0;padding:0.4in;background:#fff}header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #000;padding-bottom:6px}h1{font-size:17pt;margin:0}h2{font-size:12pt;margin:18px 0 4px}p{margin:4px 0}dl.totals{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}dl.totals div{border-top:4px solid #999;padding-top:4px}dl.totals dd{margin:0;font-size:15pt;font-weight:700}table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th{font-weight:600;border-bottom:1px solid #000}th,td{padding:2px 6px;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left;white-space:normal}tr.total td{border-top:1px solid #000;font-weight:700}.flag{color:#b42318;font-weight:600}footer{margin-top:20px;border-top:1px solid #999;padding-top:6px;font-size:8pt;color:#333;word-break:break-all}section{break-inside:avoid}h3{font-size:10.5pt;margin:12px 0 2px}p.basis{font-size:8.5pt;color:#333}p.callout{margin:4px 0 0}`;
+
+// Tax another merchant of record (Managed Markets) paid on Shopify orders.
+export const internationalTax = (d: {
+	channels: { source: string; marketplaceTax: number }[];
+}) =>
+	d.channels
+		.filter((r) => r.source === "shopify")
+		.reduce((s, r) => s + r.marketplaceTax, 0);
+
+function caveat(r: StatementResult) {
+	const why = statementCaveat(r);
+	return why ? `<p class="flag">${escapeHtml(why)}</p>` : "";
+}
+
+function statementBlock(
+	r: StatementResult,
+	usd: (n: number | null) => string,
+): string {
+	const name = STATEMENT_NAME[r.channel];
+	if (r.state === "missing")
+		return `<h3>${escapeHtml(name)}</h3><p class="flag">${escapeHtml(
+			r.error ? `Not read: ${r.error}` : "Not read yet",
+		)}</p>`;
+	const view = statementView(r.statement);
+	const head = `<h3>${escapeHtml(name)}: ${escapeHtml(STATEMENT_TITLE[r.channel])}</h3><p class="basis">${escapeHtml(STATEMENT_BASIS[r.channel])}</p>${caveat(r)}`;
+	if (view.kind === "table") {
+		const cell = (n: number, i: number) => (view.columns[i].count ? n : usd(n));
+		return `${head}${table(
+			["", ...view.columns.map((c) => c.label)],
+			view.rows.map((row) => [row.label, ...row.cells.map(cell)]),
+			["Total", ...view.total.map(cell)],
+		)}${view.callouts
+			.map(
+				(l) =>
+					`<p class="callout">${escapeHtml(l.label)}: <strong>${escapeHtml(usd(l.amount))}</strong></p>`,
+			)
+			.join("")}`;
+	}
+	return `${head}${view.sections
+		.map((sec) =>
+			table(
+				[sec.title ?? "", ""],
+				sec.lines.map((l) => [l.label, usd(l.amount)]),
+				sec.total ? [sec.total.label, usd(sec.total.amount)] : undefined,
+			),
+		)
+		.join("")}`;
+}
 
 export function printHtml(d: ReportData, meta: RevisionMeta): string {
+	if (d.schemaVersion === 1)
+		throw new Error(
+			"A revision saved before marketplace figures keeps the report it was saved with",
+		);
 	const usd = (n: number | null) => formatAmount(n, d.currency);
 	const period = parsePeriod(d.period);
 	const title = `Sales and Sales Tax, ${period ? periodName(period) : d.period}`;
@@ -72,11 +132,29 @@ export function printHtml(d: ReportData, meta: RevisionMeta): string {
 		timeStyle: "short",
 	}).format(new Date(meta.asOf));
 
+	const summary = statementSummary(d.statements, internationalTax(d));
+	const sent = d.deposits
+		.filter((r) => r.currency === d.currency)
+		.reduce((s, r) => s + (r.status === "sent" ? r.amount : 0), 0);
+	const missingNames = (cs: readonly (keyof typeof STATEMENT_NAME)[]) =>
+		`Missing ${cs.map((c) => STATEMENT_NAME[c]).join(", ")}`;
+	// A sum over figures that aren't the month's yet says so.
+	const soFar = summary.provisional.length > 0 ? " so far" : "";
 	const totals = [
-		["Gross sales", usd(all.grossSales)],
-		["Proceeds before product cost", usd(all.proceedsBeforeCost)],
+		[
+			"Net sales",
+			summary.netSales === null
+				? missingNames(summary.netSalesMissing)
+				: `${usd(summary.netSales)}${soFar}`,
+		],
 		["Sales tax you collected", usd(all.ourTax)],
-		["Tax paid by marketplaces", usd(all.marketplaceTax)],
+		[
+			"Tax paid by marketplaces",
+			summary.marketplaceTax === null
+				? missingNames(summary.taxMissing)
+				: `${usd(summary.marketplaceTax)}${soFar}`,
+		],
+		["Paid out", usd(sent)],
 	]
 		.map(
 			([label, value]) =>
@@ -84,30 +162,7 @@ export function printHtml(d: ReportData, meta: RevisionMeta): string {
 		)
 		.join("");
 
-	const channelLine = (name: string, r: typeof all) => [
-		name,
-		r.orders,
-		usd(r.grossSales),
-		usd(r.refunds),
-		usd(r.fees + r.adjustments),
-		usd(r.labels),
-		usd(r.postageAdjustments),
-		usd(r.proceedsBeforeCost),
-	];
-	const channels = table(
-		[
-			"",
-			"Orders",
-			"Gross sales",
-			"Refunds",
-			"Fees",
-			"Labels",
-			"Postage",
-			"Proceeds before cost",
-		],
-		d.channels.map((r) => channelLine(sourceName(r.source), r)),
-		d.channels.length > 1 ? channelLine("Total", all) : undefined,
-	);
+	const statements = d.statements.map((r) => statementBlock(r, usd)).join("");
 
 	const owed = table(
 		["", "Rate", "Sales on taxed orders", "Tax"],
@@ -123,10 +178,11 @@ export function printHtml(d: ReportData, meta: RevisionMeta): string {
 	);
 
 	const paid = table(
-		["", "Tax", "Orders tax not read"],
-		d.channels
-			.filter((r) => r.marketplaceTax !== 0 || r.taxUnknown > 0)
-			.map((r) => [sourceName(r.source), usd(r.marketplaceTax), r.taxUnknown]),
+		["", "Tax"],
+		summary.taxRows.map((r) => [r.label, usd(r.amount)]),
+		summary.marketplaceTax === null
+			? undefined
+			: ["Total", usd(summary.marketplaceTax)],
 	);
 
 	const currencies = [...new Set(d.deposits.map((r) => r.currency))];
@@ -221,15 +277,15 @@ export function printHtml(d: ReportData, meta: RevisionMeta): string {
 
 	return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head><body>
-<header><div><p><strong>${escapeHtml(d.business.name ?? "")}</strong></p><h1>${escapeHtml(title)}</h1></div><p style="text-align:right">${escapeHtml(period ? periodDays(period) : d.period)}<br>By order date<br>Revision ${meta.revision}</p></header>
+<header><div><p><strong>${escapeHtml(d.business.name ?? "")}</strong></p><h1>${escapeHtml(title)}</h1></div><p style="text-align:right">${escapeHtml(period ? periodDays(period) : d.period)}<br>Each marketplace's own month<br>Revision ${meta.revision}</p></header>
 ${notes}
 <dl class="totals">${totals}</dl>
-${section("Sales by channel", channels)}
+${section("Sales by marketplace", statements)}
 ${section("Sales tax you collected", owed)}
 ${section("Tax paid by marketplaces", paid)}
 ${section("Payouts from marketplaces", deposits)}
 ${section("Shopify sales by state", states)}
-${section("Contribution", `${contribution}<p>${escapeHtml(contributionStatus(d))}</p>`)}
+${section("Contribution (katasync, by order date)", `${contribution}<p>${escapeHtml(contributionStatus(d))}</p>`)}
 ${section("Fee evidence", evidence)}
 <footer>${footer}</footer>
 </body></html>

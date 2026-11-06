@@ -11,6 +11,14 @@ import {
 } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
+import {
+	Section,
+	SideBySide,
+	StatementBlock,
+	salesChannelChip,
+	Table,
+	type TableProps,
+} from "#/components/report-page/print-parts";
 import { SavedPrint } from "#/components/report-page/saved-print";
 import { formatCount, formatMoney } from "#/lib/format";
 import { placeName, taxName } from "#/lib/places";
@@ -27,11 +35,14 @@ import {
 	periodText,
 	taxedElsewhere,
 } from "#/orders/sales-report";
+import { internationalTax } from "#/reports/print-html";
+import type { StatementChannel } from "#/reports/statements/types";
+import { STATEMENT_NAME, statementSummary } from "#/reports/statements/view";
 import { getReportArtifact, getSalesReport } from "#/server/reports";
 
 // The month's sales and sales tax on one or two letter pages, for the
-// accountant: what needs a look first, the totals, a row per channel, and
-// the tax, owed and not. Rows of zeros are left out. Same numbers as the
+// accountant: the totals, each marketplace's own figures as its statement or
+// sales report shows them, and the tax, owed and not. Same numbers as the
 // Reports tab.
 export const Route = createFileRoute("/print/report")({
 	validateSearch: (
@@ -147,22 +158,22 @@ function PrintReport({ d }: { d: Data }) {
 						<p className="shrink-0 text-right text-[9pt]">
 							{periodDays(period)}
 							<br />
-							By order date
+							Each marketplace's own month
 						</p>
 					</header>
 
-					{d.channels.length === 0 ? (
-						<p>katasync has no orders in this month.</p>
-					) : (
-						<>
-							<Totals channels={d.channels} />
-							<Section icon={Store} title="Sales by channel">
-								<Channels rows={d.channels} />
-							</Section>
-							<Section icon={Landmark} title="Sales tax you collected">
-								<Owed rows={d.jurisdictions} />
-							</Section>
-						</>
+					<Totals d={d} />
+					<Section icon={Store} title="Sales by marketplace">
+						<div className="space-y-3">
+							{d.statements.map((r) => (
+								<StatementBlock key={r.channel} r={r} />
+							))}
+						</div>
+					</Section>
+					{d.channels.length > 0 && (
+						<Section icon={Landmark} title="Sales tax you collected">
+							<Owed rows={d.jurisdictions} />
+						</Section>
 					)}
 					{/* Payouts stand apart from sales: a month with deposits and no orders still prints them. */}
 					<div className="grid grid-cols-2 gap-6">
@@ -170,7 +181,7 @@ function PrintReport({ d }: { d: Data }) {
 							left={{
 								icon: ShieldCheck,
 								title: "Paid by marketplaces",
-								table: paidByMarketplaces(d.channels),
+								table: paidByMarketplaces(d),
 							}}
 							right={{
 								icon: Banknote,
@@ -229,210 +240,76 @@ function OnePage({ children }: { children: ReactNode }) {
 	);
 }
 
-function Section({
-	icon: Icon,
-	title,
-	children,
-}: {
-	icon: typeof Store;
-	title: string;
-	children: ReactNode;
-}) {
-	return (
-		<section className="break-inside-avoid">
-			<h2 className="mb-1 flex items-center gap-2 text-[12pt] font-bold">
-				<Icon className="size-[1.1em] text-muted-foreground" />
-				{title}
-			</h2>
-			{children}
-		</section>
-	);
-}
+// A figure that needs a marketplace not read yet says which, instead of
+// printing a partial sum as if it were the whole.
+type Figure =
+	| { kind: "amount"; value: number; soFar?: boolean }
+	| { kind: "missing"; from: StatementChannel[] };
 
-function Totals({ channels }: { channels: ChannelRow[] }) {
-	// Each figure's color: what came in, what's kept, what's owed, and tax
-	// that was never ours.
-	const figures: [string, number, string][] = [
-		["Gross sales", sum(channels, (c) => c.grossSales), "border-info-icon"],
+const figureOf = (
+	value: number | null,
+	from: StatementChannel[],
+	soFar: boolean,
+): Figure =>
+	value === null ? { kind: "missing", from } : { kind: "amount", value, soFar };
+
+function Totals({ d }: { d: Data }) {
+	const summary = statementSummary(d.statements, internationalTax(d));
+	const sent = payoutTotals(
+		d.deposits.filter((r) => r.currency === "USD"),
+	).sent;
+	// Each figure's color: what came in, what's owed, tax that was never
+	// ours, and what reached the bank.
+	const figures: [string, Figure, string][] = [
 		[
-			"Proceeds before cost",
-			sum(channels, (c) => c.net),
-			"border-success-icon",
+			"Net sales",
+			figureOf(
+				summary.netSales,
+				summary.netSalesMissing,
+				summary.provisional.length > 0,
+			),
+			"border-info-icon",
 		],
 		[
 			"Sales tax you collected",
-			sum(channels, (c) => c.ourTax),
+			{ kind: "amount", value: sum(d.channels, (c) => c.ourTax) },
 			"border-warning-icon",
 		],
 		[
 			"Tax paid by marketplaces",
-			sum(channels, (c) => c.marketplaceTax),
+			figureOf(
+				summary.marketplaceTax,
+				summary.taxMissing,
+				summary.provisional.length > 0,
+			),
 			"border-black/25",
 		],
+		["Paid out", { kind: "amount", value: sent }, "border-success-icon"],
 	];
 	return (
 		<dl className="grid break-inside-avoid grid-cols-4 gap-4">
-			{figures.map(([label, value, color]) => (
+			{figures.map(([label, f, color]) => (
 				<div key={label} className={cn("border-t-4 pt-1.5", color)}>
 					<dt className="text-[9.5pt]">{label}</dt>
 					<dd className="text-[15pt] font-bold tabular-nums">
-						{formatMoney(value)}
+						{f.kind === "amount" ? (
+							<>
+								{formatMoney(f.value)}
+								{f.soFar && (
+									<span className="ml-1 text-[9pt] font-normal text-warning-text">
+										so far
+									</span>
+								)}
+							</>
+						) : (
+							<span className="text-[10pt] text-critical-text">
+								Missing {f.from.map((c) => STATEMENT_NAME[c]).join(", ")}
+							</span>
+						)}
 					</dd>
 				</div>
 			))}
 		</dl>
-	);
-}
-
-// A plain table: first column text, the rest right-aligned numbers, and a
-// bold total row under a rule.
-type TableProps = {
-	head: string[];
-	rows: { key: string; cells: ReactNode[] }[];
-	total?: ReactNode[];
-};
-
-// Lines a table takes below its heading.
-const lines = (t: TableProps) => t.rows.length + (t.total ? 1 : 0);
-
-// Two tables side by side, the shorter padded with blank lines above its
-// total so both end level. Each says what to print instead of a table.
-type Side = {
-	icon: typeof Store;
-	title: string;
-	table: TableProps | null;
-	empty?: string;
-};
-
-function SideBySide({ left, right }: { left: Side; right: Side }) {
-	const tall = Math.max(
-		...[left.table, right.table].map((t) => (t ? lines(t) : 0)),
-	);
-	return [left, right].map((s) => (
-		<Section key={s.title} icon={s.icon} title={s.title}>
-			{s.table ? (
-				<Table {...s.table} height={tall} />
-			) : (
-				<p>{s.empty ?? "None."}</p>
-			)}
-		</Section>
-	));
-}
-
-function Table({
-	head,
-	rows,
-	total,
-	height = 0,
-}: TableProps & { height?: number }) {
-	const blanks = Array.from(
-		{ length: Math.max(0, height - lines({ head, rows, total })) },
-		(_, i) => `blank-${i}`,
-	);
-	const cell = (i: number) =>
-		cn(
-			"py-0.5",
-			i === 0
-				? "pr-2 text-left"
-				: "pl-2 text-right whitespace-nowrap tabular-nums",
-		);
-	return (
-		<table className="w-full border-collapse">
-			<thead>
-				<tr className="border-b border-black text-[9.5pt]">
-					{head.map((h, i) => (
-						<th key={h} className={cn(cell(i), "font-semibold")}>
-							{h}
-						</th>
-					))}
-				</tr>
-			</thead>
-			<tbody>
-				{rows.map((r) => (
-					<tr key={r.key}>
-						{r.cells.map((c, i) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: cells are positional
-							<td key={i} className={cell(i)}>
-								{c}
-							</td>
-						))}
-					</tr>
-				))}
-				{blanks.map((key) => (
-					<tr key={key}>
-						<td className={cell(0)} colSpan={head.length}>
-							{/* An unseen chip, so the line is exactly as tall as the others. */}
-							<span className="invisible" aria-hidden="true">
-								{CHIPS.amazon}
-							</span>
-						</td>
-					</tr>
-				))}
-				{total && (
-					<tr className="border-t border-black font-bold">
-						{total.map((c, i) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: cells are positional
-							<td key={i} className={cell(i)}>
-								{c}
-							</td>
-						))}
-					</tr>
-				)}
-			</tbody>
-		</table>
-	);
-}
-
-// One row per channel. Fees take in the marketplace's other adjustments, so
-// gross less refunds, fees, labels and postage is net.
-function Channels({ rows }: { rows: ChannelRow[] }) {
-	const ordered = SOURCES.flatMap(([s, name]) => {
-		const r = rows.find((x) => x.source === s);
-		return r ? [{ s, name, r }] : [];
-	});
-	const fees = (r: ChannelRow) => r.fees + r.adjustments;
-	const line = (chip: ReactNode, r: Omit<ChannelRow, "source">) => [
-		chip,
-		formatCount(r.orders),
-		formatMoney(r.grossSales),
-		formatMoney(r.refunds),
-		formatMoney(fees(r as ChannelRow)),
-		formatMoney(r.labels),
-		formatMoney(r.postageAdjustments),
-		formatMoney(r.net),
-	];
-	const all = (get: (r: ChannelRow) => number) => sum(rows, get);
-	return (
-		<Table
-			head={[
-				"",
-				"Orders",
-				"Gross sales",
-				"Refunds",
-				"Fees",
-				"Labels",
-				"Postage",
-				"Proceeds before cost",
-			]}
-			rows={ordered.map(({ s, name, r }) => ({
-				key: name,
-				cells: line(CHIPS[s], r),
-			}))}
-			total={
-				ordered.length > 1
-					? [
-							"Total",
-							formatCount(all((r) => r.orders)),
-							formatMoney(all((r) => r.grossSales)),
-							formatMoney(all((r) => r.refunds)),
-							formatMoney(all(fees)),
-							formatMoney(all((r) => r.labels)),
-							formatMoney(all((r) => r.postageAdjustments)),
-							formatMoney(all((r) => r.net)),
-						]
-					: undefined
-			}
-		/>
 	);
 }
 
@@ -459,58 +336,50 @@ function Owed({ rows }: { rows: Data["jurisdictions"] }) {
 	);
 }
 
-// Every marketplace with tax, or whose tax isn't read yet: leaving that one
-// out would make the page look complete while its tax is missing. Tax on our
-// own Shopify sales that someone else paid is Managed Markets', on orders it
-// sold abroad for us, so it reads as International.
-function paidByMarketplaces(rows: ChannelRow[]): TableProps | null {
-	const paid = SOURCES.flatMap(([s, name]) => {
-		const r = rows.find((x) => x.source === s);
-		if (!r) return [];
-		const ours = s === "shopify" || s === "retail";
-		const chip = ours ? (
+// Tax each marketplace collected and pays itself, from its own figures: the
+// Shop app's and TikTok's from Shopify's report, Amazon's and eBay's from
+// theirs. Tax on our own Shopify sales that someone else paid is Managed
+// Markets', on orders it sold abroad for us, so it reads as International.
+function paidByMarketplaces(d: Data): TableProps | null {
+	const summary = statementSummary(d.statements, internationalTax(d));
+	const chip = (label: string) =>
+		label === "Amazon" ? (
+			CHIPS.amazon
+		) : label === "eBay" ? (
+			CHIPS.ebay
+		) : label === "International" ? (
 			<ChannelBadge
-				key="who"
 				channel="shopify"
 				salesChannel="Online Store"
 				label="International"
 			/>
 		) : (
-			CHIPS[s]
+			salesChannelChip(label === "Shop app" ? "Shop" : label)
 		);
-		return r.marketplaceTax !== 0 || (!ours && r.taxUnknown > 0)
-			? [
-					{
-						chip,
-						name,
-						tax: r.marketplaceTax,
-						unread: ours ? 0 : r.taxUnknown,
-					},
-				]
-			: [];
-	});
-	if (paid.length === 0) return null;
-	const unread = paid.some((p) => p.unread > 0);
+	const rows = summary.taxRows.filter((r) => r.amount !== 0);
+	if (rows.length === 0 && summary.taxMissing.length === 0) return null;
 	return {
 		head: ["", "Tax"],
-		rows: paid.map((p) => ({
-			key: p.name,
-			cells: [
-				p.chip,
-				p.unread === 0 ? (
-					formatMoney(p.tax)
-				) : (
+		rows: [
+			...rows.map((r) => ({
+				key: r.label,
+				cells: [chip(r.label), formatMoney(r.amount)],
+			})),
+			...summary.taxMissing.map((c) => ({
+				key: c,
+				cells: [
+					CHIPS[c === "shopify" ? "shop" : c],
 					<span key="tax" className="text-muted-foreground">
-						{p.tax === 0 ? "Not read yet" : `${formatMoney(p.tax)} so far`}
-					</span>
-				),
-			],
-		})),
+						Not read yet
+					</span>,
+				],
+			})),
+		],
 		total:
-			paid.length > 1
+			rows.length > 1
 				? [
-						unread ? "Total so far" : "Total",
-						formatMoney(sum(paid, (p) => p.tax)),
+						summary.marketplaceTax === null ? "Total so far" : "Total",
+						formatMoney(sum(rows, (r) => r.amount)),
 					]
 				: undefined,
 	};

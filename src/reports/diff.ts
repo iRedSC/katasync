@@ -2,6 +2,7 @@ import { channelName } from "#/lib/format";
 import { placeName, taxName } from "#/lib/places";
 import { HOW_SUFFIX, sourceName } from "./files";
 import type { ReportData } from "./snapshot";
+import { STATEMENT_NAME, statementFigures } from "./statements/view";
 
 type Leaf = string | number | boolean | null;
 
@@ -28,6 +29,25 @@ const SECTIONS: {
 	name: string;
 	rows: (d: ReportData) => Keyed[];
 }[] = [
+	{
+		name: "Marketplace figures",
+		rows: (d) =>
+			d.schemaVersion === 1
+				? []
+				: d.statements.map((r) => ({
+						key: r.channel,
+						label: STATEMENT_NAME[r.channel],
+						value:
+							r.state === "read"
+								? Object.fromEntries(
+										statementFigures(r.statement).map((l) => [
+											l.label,
+											l.amount,
+										]),
+									)
+								: { read: false },
+					})),
+	},
 	{
 		name: "Sales",
 		rows: (d) =>

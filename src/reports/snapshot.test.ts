@@ -78,10 +78,19 @@ describe("canonicalJson", () => {
 });
 
 describe("parseReportData", () => {
+	it("still reads a revision saved before marketplace figures", () => {
+		const { statements: _, ...rest } = reportDataFixture();
+		const saved = { ...rest, schemaVersion: 1, basis: "order_date" };
+		expect(parseReportData(saved).schemaVersion).toBe(1);
+	});
+
 	it("refuses a saved revision of another shape", () => {
 		expect(() =>
-			parseReportData({ ...reportDataFixture(), schemaVersion: 2 }),
+			parseReportData({ ...reportDataFixture(), schemaVersion: 3 }),
 		).toThrow(/doesn't read/);
+		// A current revision without the marketplaces' figures isn't one.
+		const { statements: _, ...withoutFigures } = reportDataFixture();
+		expect(() => parseReportData(withoutFigures)).toThrow(/doesn't read/);
 		expect(() =>
 			parseReportData({ ...reportDataFixture(), channels: [{ source: "x" }] }),
 		).toThrow(/doesn't read/);

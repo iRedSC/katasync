@@ -7,12 +7,15 @@ import {
 	type SalesReport,
 } from "#/orders/sales-report";
 import type { EvidenceRow } from "./evidence";
+import { statementResult } from "./statements/types";
 
-export const SCHEMA_VERSION = 1;
-export const RENDERER_VERSION = 1;
+// 2: each marketplace's own figures for the month (statements), which the
+// report leads with. Revisions saved as 1 still read, without them.
+export const SCHEMA_VERSION = 2;
+export const RENDERER_VERSION = 2;
 export const REPORT_CURRENCY = "USD";
 export const REPORT_SOURCE =
-	"katasync order_profit, order_taxes, order_cost_reports, cost_entries, payouts";
+	"Marketplace statements and sales reports (marketplace_statements); katasync order_profit, order_taxes, order_cost_reports, cost_entries, payouts";
 
 const marketplace = "'shopify' | 'amazon' | 'ebay' | 'tiktok'";
 const bucket = type({ orders: "number", amount: "number" });
@@ -102,11 +105,9 @@ const evidenceRow = type({
 	taxUnknown: "number",
 });
 
-export const reportData = type({
-	schemaVersion: "1",
+const common = {
 	kind: "'sales_tax_month'",
 	period: "string",
-	basis: "'order_date'",
 	currency: "string",
 	timeZone: "string",
 	source: "string",
@@ -120,6 +121,19 @@ export const reportData = type({
 	partial: type({ channel: marketplace, firstOrder: "string" }).array(),
 	contribution,
 	evidence: evidenceRow.array(),
+} as const;
+
+export const reportData = type({
+	...common,
+	schemaVersion: "1",
+	basis: "'order_date'",
+}).or({
+	...common,
+	schemaVersion: "2",
+	// Sales, refunds and fees as each marketplace's own statement has them;
+	// tax by state and contribution still from katasync's orders.
+	basis: "'marketplace_statements'",
+	statements: statementResult.array(),
 });
 
 export type ReportData = typeof reportData.infer;
@@ -145,7 +159,8 @@ export function toReportData(input: {
 		schemaVersion: SCHEMA_VERSION,
 		kind: "sales_tax_month",
 		period: periodText(input.period),
-		basis: "order_date",
+		basis: "marketplace_statements",
+		statements: sales.statements,
 		currency: REPORT_CURRENCY,
 		timeZone: SHOP_TIME_ZONE,
 		source: REPORT_SOURCE,
