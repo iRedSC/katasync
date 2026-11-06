@@ -36,16 +36,17 @@ import { isUnsent, poData } from "./po-data";
 import { useAction } from "./use-action";
 
 const PAGE = 100;
+// One array, so a sent PO's rows aren't rebuilt on every render.
+const NO_RECS: PurchaseOrderDetail["recommended"] = [];
 
 type Load =
-	| { state: "idle" }
 	| { state: "loading" }
 	| { state: "loaded"; rows: BrowseRow[] }
 	| { state: "failed"; message: string };
 
-// Under the lines: what to add to the PO. With nothing typed, a draft's
-// recommendations: this supplier's products worth adding, filled to their
-// max, in the order the suggestion ranks them. Typing searches everything
+// Under the lines: what to add to the PO. With nothing typed, everything
+// this supplier sells, a draft's recommendations first (filled to their max,
+// in the order the suggestion ranks them). Typing searches everything
 // this supplier sells in the product list's language (^!velocity puts the
 // fastest sellers first), then products from anyone else by name, SKU, or
 // barcode, so a scan finds whatever it is. Enter adds the first row and
@@ -74,15 +75,12 @@ export function AddItems({
 	const q = useMemo(() => parseQuery(query), [query]);
 	const searching = isSearching(q, chips);
 
-	// This supplier's whole list, loaded the first time it's wanted. A sort
-	// wants it too: only the list knows the recommendations' class, status,
-	// and the rest of the product columns.
-	const [load, setLoad] = useState<Load>({ state: "idle" });
+	// This supplier's whole list: the empty box shows all of it, under the
+	// recommendations, which show while it loads.
+	const [load, setLoad] = useState<Load>({ state: "loading" });
 	const [attempt, setAttempt] = useState(0);
-	const wanted = searching || sort.length > 0 || load.state !== "idle";
 	// biome-ignore lint/correctness/useExhaustiveDependencies: attempt is Try again
 	useEffect(() => {
-		if (!wanted) return;
 		let current = true;
 		setLoad({ state: "loading" });
 		browseForPurchaseOrder({ data: { purchaseOrderId: d.order.id } }).then(
@@ -97,7 +95,7 @@ export function AddItems({
 		return () => {
 			current = false;
 		};
-	}, [d.order.id, attempt, wanted]);
+	}, [d.order.id, attempt]);
 	const catalog = load.state === "loaded" ? load.rows : null;
 
 	// Anyone else's products only come up for words, never for filters,
@@ -135,7 +133,7 @@ export function AddItems({
 	);
 	const language = useMemo(() => productLanguage(counts), [counts]);
 
-	const recs = draft ? d.recommended : [];
+	const recs = draft ? d.recommended : NO_RECS;
 	const rows = useMemo(
 		() => candidateRows({ recs, prepared, remote, chips, q, sort, sent }),
 		[recs, prepared, remote, chips, q, sort, sent],
@@ -253,8 +251,8 @@ export function AddItems({
 		</SortHeader>
 	);
 
-	const loading =
-		searching && (load.state === "loading" || load.state === "idle");
+	// The empty box keeps its recommendations up while the rest loads.
+	const loading = load.state === "loading" && (searching || rows.length === 0);
 	return (
 		<Card
 			flush
@@ -303,11 +301,12 @@ export function AddItems({
 					}}
 				/>
 				<SortMenu sort={sort} onSort={changeSort} columns={COLUMNS} />
-				{remote.state === "pending" && (
+				{(remote.state === "pending" ||
+					(!searching && load.state === "loading")) && (
 					<Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
 				)}
 			</div>
-			{load.state === "failed" && searching ? (
+			{load.state === "failed" && (searching || rows.length === 0) ? (
 				<div className="flex flex-col items-center gap-3 border-t px-4 py-10">
 					<p className="text-critical-text">{load.message}</p>
 					<Button variant="outline" onClick={() => setAttempt((n) => n + 1)}>
@@ -332,14 +331,26 @@ export function AddItems({
 					Searching
 				</p>
 			) : rows.length === 0 ? (
-				// A sent PO has nothing to recommend; its box speaks for itself.
-				(searching || draft) && (
-					<p className="border-t px-4 py-6 text-center text-muted-foreground">
-						{searching ? "No matches" : "Nothing recommended"}
-					</p>
-				)
+				<p className="border-t px-4 py-6 text-center text-muted-foreground">
+					{searching ? "No matches" : "This supplier sells nothing yet"}
+				</p>
 			) : (
 				<div className="overflow-x-auto border-t">
+					{/* The recommendations still work; only the rest of the list is missing. */}
+					{load.state === "failed" && (
+						<div className="flex items-center justify-between gap-3 border-b bg-critical-surface px-4 py-2 text-sm">
+							<span className="text-critical-text">
+								The rest of this supplier's list: {load.message}
+							</span>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => setAttempt((n) => n + 1)}
+							>
+								Try again
+							</Button>
+						</div>
+					)}
 					{/* This supplier's rows still work; only anyone else's are missing. */}
 					{remote.state === "failed" && (
 						<div className="flex items-center justify-between gap-3 border-b bg-critical-surface px-4 py-2 text-sm">

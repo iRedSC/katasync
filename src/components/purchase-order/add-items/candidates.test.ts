@@ -124,6 +124,42 @@ describe("candidateRows", () => {
 		expect(sorted(true)).toEqual([10, 11]);
 	});
 
+	test("an empty box lists the recommendations, then the rest of the supplier's list", () => {
+		const ids = candidateRows({
+			recs: [rec(10, 5), rec(1, 2)],
+			prepared,
+			remote: { state: "off" },
+			chips: [],
+			q: parseQuery(""),
+			sort: [],
+			sent: false,
+		}).map((c) => [c.productId, c.source.kind]);
+		// A, recommended, shows once, as the recommendation.
+		expect(ids).toEqual([
+			[10, "recommended"],
+			[1, "recommended"],
+		]);
+		const more = new Map([
+			...prepared,
+			[3, { ...a, row: { ...a.row, id: 3 } }],
+		]);
+		expect(
+			candidateRows({
+				recs: [rec(10, 5)],
+				prepared: more,
+				remote: { state: "off" },
+				chips: [],
+				q: parseQuery(""),
+				sort: [],
+				sent: true,
+			}).map((c) => [c.productId, c.source.kind]),
+		).toEqual([
+			[10, "recommended"],
+			[1, "catalog"],
+			[3, "catalog"],
+		]);
+	});
+
 	test("an off-supplier exact barcode leads a supplier partial match", () => {
 		const remote = remoteFor(
 			{ state: "done", query: "0123456789", results: [b] },

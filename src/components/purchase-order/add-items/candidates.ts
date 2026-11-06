@@ -260,7 +260,7 @@ export function candidateRows({
 }): Candidate[] {
 	const found = isSearching(q, chips)
 		? searched({ recs, prepared, remote, chips, q, sent })
-		: recs.map((r) => fromRec(r, prepared.get(r.productId)));
+		: everything(recs, prepared, sent);
 	// A sort still being typed applies once it names a column exactly.
 	const by = q.sorts.reduce<Sort<Key>>(
 		(s, t) =>
@@ -273,6 +273,22 @@ export function candidateRows({
 	const code = q.words.join(" ").toLowerCase();
 	const exact = (c: Candidate) => code !== "" && c.codes.includes(code);
 	return [...found.filter(exact), ...found.filter((c) => !exact(c))];
+}
+
+// An empty box: the recommendations first, in their rank, then the rest of
+// what this supplier sells, as soon as their list has come.
+function everything(
+	recs: Recommendation[],
+	prepared: ReadonlyMap<number, Prepared>,
+	sent: boolean,
+): Candidate[] {
+	const recIds = new Set(recs.map((r) => r.productId));
+	return [
+		...recs.map((r) => fromRec(r, prepared.get(r.productId))),
+		...[...prepared.values()]
+			.filter((p) => !recIds.has(p.row.id))
+			.map((p) => fromRow(p, sent)),
+	];
 }
 
 // The recommendations and this supplier's products the query matches, then
