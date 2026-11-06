@@ -1289,6 +1289,13 @@
       "when": 1793830314356,
       "tag": "0183_picking_version",
       "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "7",
+      "when": 1793978716704,
+      "tag": "0184_marketplace_statements",
+      "breakpoints": true
     }
   ]
 }

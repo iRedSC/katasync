@@ -4,12 +4,16 @@ import type { Db } from "#/db/client";
 import { payoutChecks, payouts } from "#/db/schema";
 import { channelName, formatMoney } from "#/lib/format";
 import { US_STATES } from "#/lib/places";
+import { readStatements } from "#/reports/statements/refresh";
 import { TIME_ZONE } from "./profit";
 
-// Sales and sales tax for the accountant, one calendar month at a time in
-// shop time, by the date each order was placed. Every order not cancelled
-// counts, shipped or not, with its refunds and charges as known now. Built
-// on order_profit (drizzle/0090_shippo_adjustments.sql) and order_taxes.
+// Sales and sales tax for the accountant, one calendar month at a time.
+// Sales, refunds and fees come from each marketplace's own figures for its
+// month (src/reports/statements), so they match its statement line for line.
+// The rest is katasync's orders, in shop time, by the date each was placed:
+// every order not cancelled counts, shipped or not, with its refunds and
+// charges as known now. Built on order_profit
+// (drizzle/0090_shippo_adjustments.sql) and order_taxes.
 
 // A calendar month, "2026-09" in addresses. month is 1 to 12.
 export type Period = { year: number; month: number };
@@ -287,10 +291,17 @@ export async function readSalesReport(db: Db, period: Period) {
 	// Shop and business reads don't depend on one another, so they're
 	// queued together on the snapshot's connection. States comes after,
 	// since its tax falls back to our home state.
-	const [channels, jurisdictions, business, partial, deposits, payoutErrors] =
-		await Promise.all([
-			rowsOf<ChannelRow>(
-				db.execute(sql`
+	const [
+		channels,
+		jurisdictions,
+		business,
+		partial,
+		deposits,
+		payoutErrors,
+		statements,
+	] = await Promise.all([
+		rowsOf<ChannelRow>(
+			db.execute(sql`
 				with ${placed}
 				select source,
 					count(*)::int as orders,
@@ -311,9 +322,9 @@ export async function readSalesReport(db: Db, period: Period) {
 				group by source
 				order by sum(revenue + shipping_charged) desc
 			`),
-			),
-			rowsOf<JurisdictionRow>(
-				db.execute(sql`
+		),
+		rowsOf<JurisdictionRow>(
+			db.execute(sql`
 				with ${placed}
 				select case when p.sold_in_store then 'US'
 						else coalesce(upper(nullif(btrim(p.ship_country), '')), 'US') end as country,
@@ -327,11 +338,11 @@ export async function readSalesReport(db: Db, period: Period) {
 				group by 1, t.jurisdiction, t.rate
 				order by sum(t.amount) desc
 			`),
-			),
-			// Who the report is for, and the state we're in: the retail store's,
-			// else the warehouse's. The name is the one invoices go out under.
-			rowsOf<{ name: string | null; homeState: string | null }>(
-				db.execute(sql`
+		),
+		// Who the report is for, and the state we're in: the retail store's,
+		// else the warehouse's. The name is the one invoices go out under.
+		rowsOf<{ name: string | null; homeState: string | null }>(
+			db.execute(sql`
 				select
 					(select coalesce(ship_from_name, name) from locations
 						where kind <> 'fba' order by ship_from_name is null, kind = 'retail' limit 1) as name,
@@ -339,47 +350,47 @@ export async function readSalesReport(db: Db, period: Period) {
 						where kind <> 'fba' and nullif(btrim(region), '') is not null
 						order by kind = 'retail' desc limit 1) as "homeState"
 			`),
-			),
-			// Channels whose orders in katasync start after the period does: it
-			// fetched only so far back when the channel was connected, so their
-			// sales before then are missing here, not zero.
-			rowsOf<{
-				channel: "shopify" | "amazon" | "ebay" | "tiktok";
-				firstOrder: string;
-			}>(
-				db.execute(sql`
+		),
+		// Channels whose orders in katasync start after the period does: it
+		// fetched only so far back when the channel was connected, so their
+		// sales before then are missing here, not zero.
+		rowsOf<{
+			channel: "shopify" | "amazon" | "ebay" | "tiktok";
+			firstOrder: string;
+		}>(
+			db.execute(sql`
 				select sold_on as channel, min(placed_at) as "firstOrder"
 				from order_profit
 				group by sold_on
 				having min(placed_at) > ${start}
 				order by 2
 			`),
-			),
-			// Money the marketplaces sent to the bank during the month, by the day
-			// it was sent: cash, not order dates, so it won't add up to the month's
-			// sales.
-			db
-				.select({
-					externalId: payouts.externalId,
-					channel: payouts.channel,
-					status: payouts.status,
-					depositedAt: payouts.depositedAt,
-					amount: payouts.amount,
-					currency: payouts.currency,
-					bankTail: payouts.bankTail,
-					reference: payouts.reference,
-				})
-				.from(payouts)
-				.where(
-					and(gte(payouts.depositedAt, start), lt(payouts.depositedAt, end)),
-				)
-				.orderBy(asc(payouts.depositedAt)),
-			// Marketplaces whose payouts couldn't be read last time, and why.
-			db
-				.select({ channel: payoutChecks.channel, error: payoutChecks.error })
-				.from(payoutChecks)
-				.where(isNotNull(payoutChecks.error)),
-		]);
+		),
+		// Money the marketplaces sent to the bank during the month, by the day
+		// it was sent: cash, not order dates, so it won't add up to the month's
+		// sales.
+		db
+			.select({
+				externalId: payouts.externalId,
+				channel: payouts.channel,
+				status: payouts.status,
+				depositedAt: payouts.depositedAt,
+				amount: payouts.amount,
+				currency: payouts.currency,
+				bankTail: payouts.bankTail,
+				reference: payouts.reference,
+			})
+			.from(payouts)
+			.where(and(gte(payouts.depositedAt, start), lt(payouts.depositedAt, end)))
+			.orderBy(asc(payouts.depositedAt)),
+		// Marketplaces whose payouts couldn't be read last time, and why.
+		db
+			.select({ channel: payoutChecks.channel, error: payoutChecks.error })
+			.from(payoutChecks)
+			.where(isNotNull(payoutChecks.error)),
+		// Each marketplace's own figures for the month, as last read.
+		readStatements(db, period),
+	]);
 
 	const { name, homeState } = business.rows[0] ?? {
 		name: null,
@@ -433,6 +444,8 @@ export async function readSalesReport(db: Db, period: Period) {
 
 	return {
 		business: { name, homeState },
+		statements: statements.results,
+		statementsReadAt: statements.readAt,
 		deposits,
 		payoutErrors: payoutErrors.map((e) => ({
 			channel: e.channel,

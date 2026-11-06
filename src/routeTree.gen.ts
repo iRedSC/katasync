@@ -85,6 +85,7 @@ import { Route as PurchasingSuppliersIdRouteImport } from './routes/purchasing/s
 import { Route as ApiCronCostsChannelRouteImport } from './routes/api/cron/costs.$channel'
 import { Route as ApiCronOrdersChannelRouteImport } from './routes/api/cron/orders.$channel'
 import { Route as ApiCronReturnsChannelRouteImport } from './routes/api/cron/returns.$channel'
+import { Route as ApiCronStatementsChannelRouteImport } from './routes/api/cron/statements.$channel'
 import { Route as ApiCronSyncChannelRouteImport } from './routes/api/cron/sync.$channel'
 import { Route as ApiShopifyOrdersOrderIdRouteImport } from './routes/api/shopify/orders.$orderId'
 import { Route as ApiUploadsDamageTokenRouteImport } from './routes/api/uploads/damage.$token'
@@ -476,6 +477,12 @@ const ApiCronReturnsChannelRoute = ApiCronReturnsChannelRouteImport.update({
   path: '/api/cron/returns/$channel',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCronStatementsChannelRoute =
+  ApiCronStatementsChannelRouteImport.update({
+    id: '/api/cron/statements/$channel',
+    path: '/api/cron/statements/$channel',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiCronSyncChannelRoute = ApiCronSyncChannelRouteImport.update({
   id: '/api/cron/sync/$channel',
   path: '/api/cron/sync/$channel',
@@ -574,6 +581,7 @@ export interface FileRoutesByFullPath {
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/orders/$channel': typeof ApiCronOrdersChannelRoute
   '/api/cron/returns/$channel': typeof ApiCronReturnsChannelRoute
+  '/api/cron/statements/$channel': typeof ApiCronStatementsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
   '/api/shopify/orders/$orderId': typeof ApiShopifyOrdersOrderIdRoute
   '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
@@ -656,6 +664,7 @@ export interface FileRoutesByTo {
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/orders/$channel': typeof ApiCronOrdersChannelRoute
   '/api/cron/returns/$channel': typeof ApiCronReturnsChannelRoute
+  '/api/cron/statements/$channel': typeof ApiCronStatementsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
   '/api/shopify/orders/$orderId': typeof ApiShopifyOrdersOrderIdRoute
   '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
@@ -739,6 +748,7 @@ export interface FileRoutesById {
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/orders/$channel': typeof ApiCronOrdersChannelRoute
   '/api/cron/returns/$channel': typeof ApiCronReturnsChannelRoute
+  '/api/cron/statements/$channel': typeof ApiCronStatementsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
   '/api/shopify/orders/$orderId': typeof ApiShopifyOrdersOrderIdRoute
   '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
@@ -823,6 +833,7 @@ export interface FileRouteTypes {
     | '/api/cron/costs/$channel'
     | '/api/cron/orders/$channel'
     | '/api/cron/returns/$channel'
+    | '/api/cron/statements/$channel'
     | '/api/cron/sync/$channel'
     | '/api/shopify/orders/$orderId'
     | '/api/uploads/damage/$token'
@@ -905,6 +916,7 @@ export interface FileRouteTypes {
     | '/api/cron/costs/$channel'
     | '/api/cron/orders/$channel'
     | '/api/cron/returns/$channel'
+    | '/api/cron/statements/$channel'
     | '/api/cron/sync/$channel'
     | '/api/shopify/orders/$orderId'
     | '/api/uploads/damage/$token'
@@ -987,6 +999,7 @@ export interface FileRouteTypes {
     | '/api/cron/costs/$channel'
     | '/api/cron/orders/$channel'
     | '/api/cron/returns/$channel'
+    | '/api/cron/statements/$channel'
     | '/api/cron/sync/$channel'
     | '/api/shopify/orders/$orderId'
     | '/api/uploads/damage/$token'
@@ -1070,6 +1083,7 @@ export interface RootRouteChildren {
   ApiCronCostsChannelRoute: typeof ApiCronCostsChannelRoute
   ApiCronOrdersChannelRoute: typeof ApiCronOrdersChannelRoute
   ApiCronReturnsChannelRoute: typeof ApiCronReturnsChannelRoute
+  ApiCronStatementsChannelRoute: typeof ApiCronStatementsChannelRoute
   ApiCronSyncChannelRoute: typeof ApiCronSyncChannelRoute
   ApiShopifyOrdersOrderIdRoute: typeof ApiShopifyOrdersOrderIdRoute
   ApiUploadsDamageTokenRoute: typeof ApiUploadsDamageTokenRoute
@@ -1610,6 +1624,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCronReturnsChannelRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cron/statements/$channel': {
+      id: '/api/cron/statements/$channel'
+      path: '/api/cron/statements/$channel'
+      fullPath: '/api/cron/statements/$channel'
+      preLoaderRoute: typeof ApiCronStatementsChannelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/cron/sync/$channel': {
       id: '/api/cron/sync/$channel'
       path: '/api/cron/sync/$channel'
@@ -1720,6 +1741,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCronCostsChannelRoute: ApiCronCostsChannelRoute,
   ApiCronOrdersChannelRoute: ApiCronOrdersChannelRoute,
   ApiCronReturnsChannelRoute: ApiCronReturnsChannelRoute,
+  ApiCronStatementsChannelRoute: ApiCronStatementsChannelRoute,
   ApiCronSyncChannelRoute: ApiCronSyncChannelRoute,
   ApiShopifyOrdersOrderIdRoute: ApiShopifyOrdersOrderIdRoute,
   ApiUploadsDamageTokenRoute: ApiUploadsDamageTokenRoute,

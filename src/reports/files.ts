@@ -14,8 +14,14 @@ import {
 	RENDERER_VERSION,
 	type ReportData,
 } from "./snapshot";
+import {
+	STATEMENT_BASIS,
+	STATEMENT_NAME,
+	statementFigures,
+} from "./statements/view";
 
 export const CSV_FILES = [
+	"marketplace-figures",
 	"sales",
 	"sales-tax",
 	"sales-by-state",
@@ -130,6 +136,46 @@ function sales(d: ReportData): Cell[][] {
 		...(d.channels.length > 1
 			? [line("Total", channelTotal(d.channels), null)]
 			: []),
+	];
+}
+
+// Each marketplace's own figures, line by line, as its statement or sales
+// report has them.
+function marketplaceFigures(d: ReportData): Cell[][] {
+	const head: Cell[] = [
+		"Marketplace",
+		"Line",
+		"Amount",
+		"From",
+		"Through",
+		"Basis",
+	];
+	if (d.schemaVersion === 1) return [head];
+	return [
+		head,
+		...d.statements.flatMap((r): Cell[][] => {
+			const name = STATEMENT_NAME[r.channel];
+			if (r.state === "missing")
+				return [
+					[
+						name,
+						r.error ? `Not read: ${r.error}` : "Not read yet",
+						null,
+						null,
+						null,
+						null,
+					],
+				];
+			const w = r.statement.window;
+			return statementFigures(r.statement).map((l) => [
+				name,
+				l.label,
+				money(l.amount),
+				w.start,
+				w.end,
+				`${w.timeZone}. ${STATEMENT_BASIS[r.channel]}`,
+			]);
+		}),
 	];
 }
 
@@ -289,6 +335,8 @@ function evidence(d: ReportData): Cell[][] {
 
 export function csvFile(d: ReportData, file: CsvFile): string {
 	switch (file) {
+		case "marketplace-figures":
+			return csvText(marketplaceFigures(d));
 		case "sales":
 			return csvText(sales(d));
 		case "sales-tax":
@@ -312,7 +360,12 @@ export function aboutFile(d: ReportData, meta: RevisionMeta): string {
 		["Report", "Sales and sales tax"],
 		["Period", d.period],
 		["Days", period ? periodDays(period) : null],
-		["Basis", "Order date, orders not cancelled, as known at As of"],
+		[
+			"Basis",
+			d.schemaVersion === 1
+				? "Order date, orders not cancelled, as known at As of"
+				: "Marketplace figures as each marketplace reports its month (marketplace-figures.csv); sales.csv, tax, states and contribution by order date in shop time, orders not cancelled, as known at As of",
+		],
 		["Window start", d.window.start],
 		["Window end", d.window.end],
 		["Revision", meta.revision],

@@ -27,6 +27,7 @@ import type { VoicemailState } from "#/inbox/voicemail-model";
 import type { Standing } from "#/markets/standing";
 import type { ReturnLabel, SafetClaim } from "#/orders/return-evidence";
 import type { Applied, Proposal } from "#/purchasing/inbox/ai-filing-shapes";
+import type { Statement } from "#/reports/statements/types";
 
 // Raw bytes, for files kept in the database (label PDFs).
 const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
@@ -1413,6 +1414,38 @@ export const payoutChecks = pgTable("payout_checks", {
 	checkedAt: timestamp({ withTimezone: true }).notNull(),
 	error: text(),
 });
+
+// Each marketplace's own figures for a month, as its statement or sales
+// report shows them (src/reports/statements), read in the background since
+// Amazon's month takes a minute to read. The last good read stays when a
+// later one fails, with the failure beside it.
+export const marketplaceStatements = pgTable(
+	"marketplace_statements",
+	{
+		channel: channel().notNull(),
+		// "2026-10".
+		period: text().notNull(),
+		statement: jsonb().$type<Statement>(),
+		readAt: timestamp({ withTimezone: true }),
+		error: text(),
+		erroredAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		primaryKey({ columns: [t.channel, t.period] }),
+		check(
+			"marketplace_statements_read",
+			sql`(${t.statement} is null) = (${t.readAt} is null)`,
+		),
+		check(
+			"marketplace_statements_error",
+			sql`(${t.error} is null) = (${t.erroredAt} is null)`,
+		),
+		check(
+			"marketplace_statements_period",
+			sql`${t.period} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`,
+		),
+	],
+);
 
 export const chargeKind = pgEnum("charge_kind", [
 	"fee",

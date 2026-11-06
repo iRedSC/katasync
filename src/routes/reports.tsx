@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Card, EmptyState, Page } from "#/components/page";
 import { downloadText } from "#/components/report-page/download";
+import { MarketplaceFigures } from "#/components/report-page/marketplace-figures";
 import { Revisions } from "#/components/report-page/revisions";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
@@ -36,8 +37,11 @@ import { type CsvFile, csvFile } from "#/reports/files";
 import type { ReportData } from "#/reports/snapshot";
 import { getReportPage } from "#/server/reports";
 
-// Sales and sales tax for the accountant, a month at a time, by order date. Each table downloads as CSV. Tax a marketplace paid
-// to the state is kept apart from tax we owe, so neither is filed twice.
+// Sales and sales tax for the accountant, a month at a time. Sales, refunds
+// and fees as each marketplace's own statement or sales report has them;
+// katasync's order-by-order view, the tax we owe and where it went, by order
+// date. Each table downloads as CSV. Tax a marketplace paid to the state is
+// kept apart from tax we owe, so neither is filed twice.
 
 export const Route = createFileRoute("/reports")({
 	// No period means last month, what's usually asked for.
@@ -122,6 +126,11 @@ function Reports() {
 					{payoutProblem(e)}
 				</p>
 			))}
+			<MarketplaceFigures
+				period={periodText(period)}
+				statements={d.statements}
+				readAt={d.statementsReadAt}
+			/>
 			{d.channels.length === 0 ? (
 				<EmptyState
 					icon={Receipt}
@@ -376,7 +385,7 @@ function Channels({
 	];
 	return (
 		<Table
-			title="Sales by marketplace"
+			title="katasync orders by channel, by order date"
 			file="sales"
 			live={live}
 			period={period}

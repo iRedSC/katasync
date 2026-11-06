@@ -79,6 +79,7 @@ describe("saved revisions", () => {
 			"contribution.csv",
 			"deposits.csv",
 			"evidence.csv",
+			"marketplace-figures.csv",
 			"report.html",
 			"sales-by-state.csv",
 			"sales-tax.csv",
