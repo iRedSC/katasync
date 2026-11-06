@@ -3,8 +3,10 @@ import type { ReactNode } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { formatCount, formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import type { StatementResult } from "#/reports/statements/types";
+import type { KatasyncTax, StatementResult } from "#/reports/statements/types";
 import {
+	type ChannelSummaryRow,
+	channelSummary,
 	STATEMENT_NAME,
 	statementCaveat,
 	statementView,
@@ -219,5 +221,83 @@ export function StatementBlock({ r }: { r: StatementResult }) {
 				</div>
 			)}
 		</div>
+	);
+}
+
+const dash = (n: number | null, fmt: (n: number) => string) =>
+	n === null ? "–" : fmt(n);
+
+// The overview's one row per channel, from each marketplace's own figures.
+export function ChannelSummary({
+	results,
+	katasync,
+}: {
+	results: StatementResult[];
+	katasync: KatasyncTax;
+}) {
+	const rows = channelSummary(results, katasync);
+	const money = (n: number | null) => dash(n, formatMoney);
+	const sum = (get: (r: ChannelSummaryRow) => number | null) =>
+		rows.reduce((s, r) => s + (get(r) ?? 0), 0);
+	const missing = rows.some((r) => r.state === "missing");
+	return (
+		<Table
+			head={[
+				"",
+				"Orders",
+				"Gross sales",
+				"Discounts",
+				"Refunds",
+				"Net sales",
+				"Shipping",
+				"Tax",
+			]}
+			rows={rows.map((r) => ({
+				key: `${r.channel}|${r.label}`,
+				cells: [
+					r.channel === "shopify" ? (
+						salesChannelChip(r.label === "Shop app" ? "Shop" : r.label)
+					) : (
+						<ChannelBadge
+							key="chip"
+							channel={r.channel}
+							salesChannel={null}
+							label={r.label}
+						/>
+					),
+					...(r.state === "missing"
+						? [
+								<span key="missing" className="font-medium text-critical-text">
+									Not read
+								</span>,
+								"",
+								"",
+								"",
+								"",
+								"",
+								"",
+							]
+						: [
+								dash(r.orders, formatCount),
+								money(r.grossSales),
+								money(r.discounts),
+								money(r.refunds),
+								money(r.netSales),
+								money(r.shipping),
+								money(r.tax),
+							]),
+				],
+			}))}
+			total={[
+				missing ? "Total so far" : "Total",
+				"",
+				formatMoney(sum((r) => r.grossSales)),
+				formatMoney(sum((r) => r.discounts)),
+				formatMoney(sum((r) => r.refunds)),
+				formatMoney(sum((r) => r.netSales)),
+				formatMoney(sum((r) => r.shipping)),
+				formatMoney(sum((r) => r.tax)),
+			]}
+		/>
 	);
 }

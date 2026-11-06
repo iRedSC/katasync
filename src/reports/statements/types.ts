@@ -46,9 +46,10 @@ export const statement = type({
 		window,
 		sections: section.array(),
 		// Items sold less promotions and item refunds, before shipping and tax.
+		// No tax: Amazon's transactions net the tax it collects against what
+		// it withholds, so its sales tax comes from katasync's Amazon orders
+		// (KatasyncTax). Earlier reads saved a figure here; it's ignored.
 		netSales: "number",
-		// Sales tax Amazon collected less what it refunded; Amazon pays it.
-		marketplaceTax: "number",
 	})
 	.or({
 		channel: "'ebay'",
@@ -115,14 +116,20 @@ export function netSalesOf(s: Statement): number | null {
 	}
 }
 
+// Tax only katasync's orders can say: what another merchant of record paid on
+// our Shopify orders (Managed Markets), and Amazon's, which its transactions
+// don't itemize.
+export type KatasyncTax = { international: number; amazon: number };
+
 // Sales tax the marketplace collected and pays itself.
-export function marketplaceTaxOf(s: Statement): number {
+export function marketplaceTaxOf(s: Statement, katasync: KatasyncTax): number {
 	switch (s.channel) {
 		case "shopify":
 			return s.rows
 				.filter(marketplaceTaxed)
 				.reduce((sum, r) => sum + r.taxes, 0);
 		case "amazon":
+			return katasync.amazon;
 		case "ebay":
 			return s.marketplaceTax;
 		case "tiktok":

@@ -1,5 +1,6 @@
 import {
 	cents,
+	type KatasyncTax,
 	marketplaceTaxed,
 	marketplaceTaxOf,
 	netSalesOf,
@@ -137,9 +138,7 @@ export type MarketplaceTaxRow = { label: string; amount: number };
 // a partial sum can't pass for the whole.
 export function statementSummary(
 	results: StatementResult[],
-	// Tax another merchant of record paid on our Shopify orders (Managed
-	// Markets), which only katasync's orders separate out.
-	internationalTax: number,
+	katasync: KatasyncTax,
 ) {
 	const read = new Map<StatementChannel, Statement>();
 	for (const r of results)
@@ -167,10 +166,13 @@ export function statementSummary(
 	for (const c of ["amazon", "ebay"] as const) {
 		const s = read.get(c);
 		if (s)
-			taxRows.push({ label: STATEMENT_NAME[c], amount: marketplaceTaxOf(s) });
+			taxRows.push({
+				label: STATEMENT_NAME[c],
+				amount: marketplaceTaxOf(s, katasync),
+			});
 	}
-	if (internationalTax !== 0)
-		taxRows.push({ label: "International", amount: internationalTax });
+	if (katasync.international !== 0)
+		taxRows.push({ label: "International", amount: katasync.international });
 	const taxMissing = (["shopify", "amazon", "ebay"] as const).filter(
 		(c) => !read.has(c),
 	);
@@ -197,4 +199,109 @@ export function statementCaveat(r: StatementResult): string | null {
 	if (r.lastError !== null) return "Older figures: reading again failed";
 	if (!r.complete) return "Month so far";
 	return null;
+}
+
+// One row per channel for the overview: each marketplace's own figures in
+// the same columns. A figure the marketplace doesn't report is null (Amazon
+// and eBay don't count orders here; eBay doesn't split shipping out of a
+// sale), so it prints as a dash rather than as a zero.
+export type ChannelSummaryRow = {
+	channel: StatementChannel;
+	// The Shopify channel, or the marketplace's name.
+	label: string;
+	state: "read" | "missing";
+	orders: number | null;
+	grossSales: number | null;
+	discounts: number | null;
+	refunds: number | null;
+	netSales: number | null;
+	shipping: number | null;
+	tax: number | null;
+};
+
+const blank = {
+	orders: null,
+	grossSales: null,
+	discounts: null,
+	refunds: null,
+	netSales: null,
+	shipping: null,
+	tax: null,
+};
+
+const sumLines = (s: Statement, match: RegExp) =>
+	"sections" in s
+		? cents(
+				s.sections
+					.flatMap((sec) => sec.lines)
+					.filter((l) => match.test(l.label))
+					.reduce((sum, l) => sum + l.amount, 0),
+			)
+		: 0;
+
+export function channelSummary(
+	results: StatementResult[],
+	katasync: KatasyncTax,
+): ChannelSummaryRow[] {
+	return results.flatMap((r): ChannelSummaryRow[] => {
+		// TikTok's sales are Shopify's TikTok row; its statements are money
+		// settled, on page 2.
+		if (r.channel === "tiktok") return [];
+		const name = STATEMENT_NAME[r.channel];
+		if (r.state === "missing")
+			return [{ channel: r.channel, label: name, state: "missing", ...blank }];
+		const s = r.statement;
+		switch (s.channel) {
+			case "shopify":
+				return s.rows.map((row) => ({
+					channel: "shopify",
+					label: row.salesChannel === "Shop" ? "Shop app" : row.salesChannel,
+					state: "read",
+					orders: row.orders,
+					grossSales: row.grossSales,
+					discounts: row.discounts,
+					refunds: row.returns,
+					netSales: row.netSales,
+					shipping: row.shipping,
+					tax: row.taxes,
+				}));
+			case "amazon":
+				return [
+					{
+						channel: "amazon",
+						label: name,
+						state: "read",
+						orders: null,
+						grossSales: sumLines(s, /^(FBA )?product sales/i),
+						discounts: sumLines(s, /^promotional rebates$/i),
+						refunds: sumLines(
+							s,
+							/product sale refunds|promotional rebate refunds/i,
+						),
+						netSales: s.netSales,
+						shipping: sumLines(s, /^shipping credit/i),
+						tax: katasync.amazon,
+					},
+				];
+			case "ebay": {
+				const gross = sumLines(s, /^gross sales$/i);
+				return [
+					{
+						channel: "ebay",
+						label: name,
+						state: "read",
+						orders: null,
+						grossSales: gross,
+						discounts: null,
+						refunds: cents(s.netSales - gross),
+						netSales: s.netSales,
+						shipping: null,
+						tax: s.marketplaceTax,
+					},
+				];
+			}
+		}
+		// TikTok, left out above.
+		return [];
+	});
 }

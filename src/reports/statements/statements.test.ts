@@ -175,7 +175,6 @@ describe("Amazon", () => {
 		expect(figure(s, "Tax: Net taxes collected")).toBe(0);
 		expect(figure(s, "Not yet sorted: Retrocharge: Not itemized")).toBe(-2);
 		expect(s.channel === "amazon" && s.netSales).toBe(50);
-		expect(s.channel === "amazon" && s.marketplaceTax).toBe(3);
 		const total = statementFigures(s)
 			.filter((l) =>
 				/ (sales, credits, and refunds|fees, shipping labels, and other charges|taxes collected)$|^Not yet sorted: Other activity$/.test(
@@ -184,6 +183,36 @@ describe("Amazon", () => {
 			)
 			.reduce((sum, l) => sum + l.amount, 0);
 		expect(total).toBeCloseTo(85 - 50 - 2);
+	});
+
+	it("files transfers, inventory credits and refund fees as the summary does", () => {
+		const s = amazonStatement(october, [
+			{
+				transactionType: "Transfer",
+				totalAmount: { currencyAmount: 500 },
+			} as never,
+			{
+				transactionType: "Adjustment",
+				totalAmount: { currencyAmount: 38.83 },
+				breakdowns: [b("ProductCharges", 38.83)],
+			} as never,
+			{
+				transactionType: "Refund",
+				totalAmount: { currencyAmount: 10 },
+				breakdowns: [
+					b("Expenses", 10, [
+						b("AmazonFees", 10, [
+							b("Commission", 12),
+							b("RefundCommission", -2),
+						]),
+					]),
+				],
+			} as never,
+		]);
+		expect(figure(s, "Transfers: Transfers to bank account")).toBe(-500);
+		expect(figure(s, "Income: FBA inventory credit")).toBe(38.83);
+		expect(figure(s, "Expenses: Selling fee refunds")).toBe(12);
+		expect(figure(s, "Expenses: Refund administration fees")).toBe(-2);
 	});
 
 	it("counts a held-back shipment once, when it first posted", () => {
@@ -214,10 +243,22 @@ describe("statementSummary", () => {
 	it("won't sum net sales while a marketplace it needs isn't read", () => {
 		const summary = statementSummary(
 			[read(ebay), { channel: "amazon", state: "missing", error: null }],
-			0,
+			{ international: 0, amazon: 0 },
 		);
 		expect(summary.netSales).toBeNull();
 		expect(summary.netSalesMissing).toEqual(["shopify", "amazon"]);
 		expect(summary.marketplaceTax).toBeNull();
+	});
+
+	it("takes Amazon's tax from katasync's orders, which its transactions net out", () => {
+		const amazon = amazonStatement(october, []);
+		const summary = statementSummary([read(amazon)], {
+			international: 8.59,
+			amazon: 9245.78,
+		});
+		expect(summary.taxRows).toEqual([
+			{ label: "Amazon", amount: 9245.78 },
+			{ label: "International", amount: 8.59 },
+		]);
 	});
 });

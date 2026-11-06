@@ -12,6 +12,7 @@ import {
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import {
+	ChannelSummary,
 	Section,
 	SideBySide,
 	StatementBlock,
@@ -27,6 +28,7 @@ import {
 	type ChannelRow,
 	formatAmount,
 	lastMonth,
+	type Period,
 	parsePeriod,
 	payoutProblem,
 	payoutTotals,
@@ -35,7 +37,7 @@ import {
 	periodText,
 	taxedElsewhere,
 } from "#/orders/sales-report";
-import { internationalTax } from "#/reports/print-html";
+import { katasyncTax } from "#/reports/print-html";
 import type { StatementChannel } from "#/reports/statements/types";
 import { STATEMENT_NAME, statementSummary } from "#/reports/statements/view";
 import { getReportArtifact, getSalesReport } from "#/server/reports";
@@ -148,27 +150,10 @@ function PrintReport({ d }: { d: Data }) {
 
 			<article className="mx-auto max-w-[8.5in] bg-white p-[0.6in] text-[10pt] text-black shadow-card print:max-w-none print:p-0 print:shadow-none">
 				<OnePage>
-					<header className="flex items-end justify-between gap-6 border-b-2 border-black pb-2">
-						<div>
-							<p className="font-semibold">{d.business.name}</p>
-							<h1 className="text-[17pt] leading-tight font-bold">
-								Sales and Sales Tax, {periodName(period)}
-							</h1>
-						</div>
-						<p className="shrink-0 text-right text-[9pt]">
-							{periodDays(period)}
-							<br />
-							Each marketplace's own month
-						</p>
-					</header>
-
+					<Header d={d} period={period} />
 					<Totals d={d} />
-					<Section icon={Store} title="Sales by marketplace">
-						<div className="space-y-3">
-							{d.statements.map((r) => (
-								<StatementBlock key={r.channel} r={r} />
-							))}
-						</div>
+					<Section icon={Store} title="Sales by channel">
+						<ChannelSummary results={d.statements} katasync={katasyncTax(d)} />
 					</Section>
 					{d.channels.length > 0 && (
 						<Section icon={Landmark} title="Sales tax you collected">
@@ -203,7 +188,40 @@ function PrintReport({ d }: { d: Data }) {
 					)}
 				</OnePage>
 			</article>
+			{/* Each marketplace's figures line for line, on a page of their own. */}
+			<article className="mx-auto mt-6 max-w-[8.5in] break-before-page bg-white p-[0.6in] text-[10pt] text-black shadow-card print:mt-0 print:max-w-none print:p-0 print:shadow-none">
+				<OnePage>
+					<Header d={d} period={period} subtitle="Marketplace breakdowns" />
+					<div className="space-y-4">
+						{d.statements.map((r) => (
+							<StatementBlock key={r.channel} r={r} />
+						))}
+					</div>
+				</OnePage>
+			</article>
 		</div>
+	);
+}
+
+function Header({
+	d,
+	period,
+	subtitle,
+}: {
+	d: Data;
+	period: Period;
+	subtitle?: string;
+}) {
+	return (
+		<header className="flex items-end justify-between gap-6 border-b-2 border-black pb-2">
+			<div>
+				<p className="font-semibold">{d.business.name}</p>
+				<h1 className="text-[17pt] leading-tight font-bold">
+					{subtitle ?? "Sales and Sales Tax"}, {periodName(period)}
+				</h1>
+			</div>
+			<p className="shrink-0 text-right text-[9pt]">{periodDays(period)}</p>
+		</header>
 	);
 }
 
@@ -254,7 +272,7 @@ const figureOf = (
 	value === null ? { kind: "missing", from } : { kind: "amount", value, soFar };
 
 function Totals({ d }: { d: Data }) {
-	const summary = statementSummary(d.statements, internationalTax(d));
+	const summary = statementSummary(d.statements, katasyncTax(d));
 	const sent = payoutTotals(
 		d.deposits.filter((r) => r.currency === "USD"),
 	).sent;
@@ -341,7 +359,7 @@ function Owed({ rows }: { rows: Data["jurisdictions"] }) {
 // theirs. Tax on our own Shopify sales that someone else paid is Managed
 // Markets', on orders it sold abroad for us, so it reads as International.
 function paidByMarketplaces(d: Data): TableProps | null {
-	const summary = statementSummary(d.statements, internationalTax(d));
+	const summary = statementSummary(d.statements, katasyncTax(d));
 	const chip = (label: string) =>
 		label === "Amazon" ? (
 			CHIPS.amazon
