@@ -194,8 +194,7 @@ export function statementSummary(
 // when they are.
 export function statementCaveat(r: StatementResult): string | null {
 	if (r.state !== "read") return null;
-	if (r.lastError !== null)
-		return `Reading again failed (${r.lastError}), so these are older figures`;
-	if (!r.complete) return "Read before the month ended: the month so far";
+	if (r.lastError !== null) return "Older figures: reading again failed";
+	if (!r.complete) return "Month so far";
 	return null;
 }
