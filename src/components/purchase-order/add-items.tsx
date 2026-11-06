@@ -36,6 +36,8 @@ import { isUnsent, poData } from "./po-data";
 import { useAction } from "./use-action";
 
 const PAGE = 100;
+// One array, so a sent PO's rows aren't rebuilt on every render.
+const NO_RECS: PurchaseOrderDetail["recommended"] = [];
 
 type Load =
 	| { state: "loading" }
@@ -131,7 +133,7 @@ export function AddItems({
 	);
 	const language = useMemo(() => productLanguage(counts), [counts]);
 
-	const recs = draft ? d.recommended : [];
+	const recs = draft ? d.recommended : NO_RECS;
 	const rows = useMemo(
 		() => candidateRows({ recs, prepared, remote, chips, q, sort, sent }),
 		[recs, prepared, remote, chips, q, sort, sent],
@@ -250,8 +252,7 @@ export function AddItems({
 	);
 
 	// The empty box keeps its recommendations up while the rest loads.
-	const loading =
-		load.state === "loading" && (searching || rows.length === 0);
+	const loading = load.state === "loading" && (searching || rows.length === 0);
 	return (
 		<Card
 			flush
@@ -305,7 +306,7 @@ export function AddItems({
 					<Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
 				)}
 			</div>
-			{load.state === "failed" ? (
+			{load.state === "failed" && (searching || rows.length === 0) ? (
 				<div className="flex flex-col items-center gap-3 border-t px-4 py-10">
 					<p className="text-critical-text">{load.message}</p>
 					<Button variant="outline" onClick={() => setAttempt((n) => n + 1)}>
@@ -335,6 +336,21 @@ export function AddItems({
 				</p>
 			) : (
 				<div className="overflow-x-auto border-t">
+					{/* The recommendations still work; only the rest of the list is missing. */}
+					{load.state === "failed" && (
+						<div className="flex items-center justify-between gap-3 border-b bg-critical-surface px-4 py-2 text-sm">
+							<span className="text-critical-text">
+								The rest of this supplier's list: {load.message}
+							</span>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => setAttempt((n) => n + 1)}
+							>
+								Try again
+							</Button>
+						</div>
+					)}
 					{/* This supplier's rows still work; only anyone else's are missing. */}
 					{remote.state === "failed" && (
 						<div className="flex items-center justify-between gap-3 border-b bg-critical-surface px-4 py-2 text-sm">
