@@ -83,6 +83,10 @@ export const statementResult = type({
 	channel: "'shopify' | 'amazon' | 'ebay' | 'tiktok'",
 	state: "'read'",
 	statement,
+	// Read after the month ended. Until then the figures are the month so far.
+	complete: "boolean",
+	// The last try to read it again failed, so these are older figures.
+	lastError: "string | null",
 }).or({
 	channel: "'shopify' | 'amazon' | 'ebay' | 'tiktok'",
 	state: "'missing'",
@@ -132,3 +136,8 @@ export const cents = (n: number) => Math.round(n * 100) / 100;
 export function sectionTotal(lines: StatementLine[], label: string) {
 	return { label, amount: cents(lines.reduce((s, l) => s + l.amount, 0)) };
 }
+
+// Figures that can't stand as the month's: read before it ended, or a newer
+// read failed since.
+export const provisional = (r: StatementResult) =>
+	r.state === "read" && (!r.complete || r.lastError !== null);

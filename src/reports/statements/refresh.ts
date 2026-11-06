@@ -42,51 +42,57 @@ export async function refreshStatement(
 	db: Db,
 	channel: StatementChannel,
 	period: Period,
+	// The marketplace's reader; tests stand one in.
+	read: (p: Period) => Promise<Statement> = READERS[channel],
 ): Promise<StatementRefresh> {
 	const key = { channel, period: periodText(period) };
+	// Figures are as of when the read began. Two reads crossing (the cron and
+	// "Read again") keep the one that began later, whichever finishes last.
+	const startedAt = new Date();
 	try {
-		const read = await READERS[channel](period);
-		const now = new Date();
+		const figures = await read(period);
 		await db
 			.insert(marketplaceStatements)
-			.values({ ...key, statement: read, readAt: now })
+			.values({ ...key, statement: figures, readAt: startedAt })
 			.onConflictDoUpdate({
 				target: [marketplaceStatements.channel, marketplaceStatements.period],
-				set: { statement: read, readAt: now, error: null, erroredAt: null },
+				set: {
+					statement: figures,
+					readAt: startedAt,
+					error: null,
+					erroredAt: null,
+				},
+				setWhere: sql`${marketplaceStatements.readAt} is null
+					or ${marketplaceStatements.readAt} < excluded.read_at`,
 			});
 		return { kind: "read" };
 	} catch (e) {
 		const error = errorText(e);
 		// Best effort: if the database is what failed, this fails too, and the
-		// error still goes back to the caller.
+		// error still goes back to the caller. Kept beside the last good read,
+		// which then shows as older figures.
 		await db
 			.insert(marketplaceStatements)
-			.values({ ...key, error, erroredAt: new Date() })
+			.values({ ...key, error, erroredAt: startedAt })
 			.onConflictDoUpdate({
 				target: [marketplaceStatements.channel, marketplaceStatements.period],
-				set: { error, erroredAt: sql`now()` },
+				set: { error, erroredAt: startedAt },
+				setWhere: sql`${marketplaceStatements.readAt} is null
+					or ${marketplaceStatements.readAt} < excluded.errored_at`,
 			})
 			.catch(() => {});
 		return { kind: "failed", error };
 	}
 }
 
-// The month so far and the one before, which keeps changing for a while
-// after it ends as late postings land.
-export function statementPeriods(now = new Date()): Period[] {
-	const before = lastMonth(now);
-	return [shiftPeriod(before, 1), before];
-}
+// The month so far, or the one before, which keeps changing for a while
+// after it ends as late postings land. Each is its own cron call, so Amazon's
+// two months never share one function's time limit.
+export type RecentMonth = "current" | "previous";
 
-export async function refreshRecentStatements(
-	db: Db,
-	channel: StatementChannel,
-	now = new Date(),
-) {
-	const results: Record<string, StatementRefresh> = {};
-	for (const p of statementPeriods(now))
-		results[periodText(p)] = await refreshStatement(db, channel, p);
-	return results;
+export function recentPeriod(which: RecentMonth, now = new Date()): Period {
+	const before = lastMonth(now);
+	return which === "previous" ? before : shiftPeriod(before, 1);
 }
 
 // What a report shows for each marketplace in a month: the last good read,
@@ -111,8 +117,16 @@ export async function readStatements(
 				state: "missing",
 				error: "The figures saved for this month don't read; read them again",
 			};
-		if (row.readAt) readAt[channel] = row.readAt;
-		return { channel, state: "read", statement: parsed };
+		const at = row.readAt ?? new Date(0);
+		readAt[channel] = at;
+		return {
+			channel,
+			state: "read",
+			statement: parsed,
+			complete: at.getTime() >= Date.parse(parsed.window.end),
+			lastError:
+				row.error && row.erroredAt && row.erroredAt > at ? row.error : null,
+		};
 	});
 	return { results, readAt };
 }

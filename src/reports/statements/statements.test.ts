@@ -206,6 +206,8 @@ describe("statementSummary", () => {
 		channel: s.channel,
 		state: "read",
 		statement: s,
+		complete: true,
+		lastError: null,
 	});
 	const ebay = ebayStatement(october, []);
 

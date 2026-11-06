@@ -3,6 +3,7 @@ import {
 	marketplaceTaxed,
 	marketplaceTaxOf,
 	netSalesOf,
+	provisional,
 	type ShopifySalesRow,
 	STATEMENT_CHANNELS,
 	type Statement,
@@ -175,6 +176,9 @@ export function statementSummary(
 	);
 	return {
 		missing,
+		// Marketplaces whose figures are the month so far, or older than the
+		// last try to read them: a sum with them isn't final.
+		provisional: results.filter(provisional).map((r) => r.channel),
 		netSales,
 		netSalesMissing: salesFrom.filter((c) => !read.has(c)),
 		taxRows,
@@ -184,4 +188,14 @@ export function statementSummary(
 				: null,
 		taxMissing,
 	};
+}
+
+// Why a read marketplace's figures aren't yet the month's, in a line, or null
+// when they are.
+export function statementCaveat(r: StatementResult): string | null {
+	if (r.state !== "read") return null;
+	if (r.lastError !== null)
+		return `Reading again failed (${r.lastError}), so these are older figures`;
+	if (!r.complete) return "Read before the month ended: the month so far";
+	return null;
 }

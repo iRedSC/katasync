@@ -1,10 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import { createFileRoute } from "@tanstack/react-router";
 
-// Reads a marketplace's own figures for this month and last
-// (src/reports/statements/refresh.ts), for the sales report. Called by
-// Vercel Cron every four hours, signed like the other crons. Apart from the
-// cost pass, since Amazon's month takes a minute or more to read.
+// Reads a marketplace's own figures for this month (?month=current) or last
+// (?month=previous) (src/reports/statements/refresh.ts), for the sales
+// report. Called by Vercel Cron every four hours, signed like the other
+// crons. One month a call, and apart from the cost pass, since Amazon's month
+// takes a minute or more to read.
 
 function fromVercel(request: Request) {
 	const secret = process.env.CRON_SECRET;
@@ -28,7 +29,7 @@ export const Route = createFileRoute("/api/cron/statements/$channel")({
 					{ isSyncedChannel },
 					{ channelEnv, missingEnv },
 					{ getDb },
-					{ refreshRecentStatements },
+					{ recentPeriod, refreshStatement },
 				] = await Promise.all([
 					import("#/channels/sync"),
 					import("#/diagnostics/checks"),
@@ -41,8 +42,15 @@ export const Route = createFileRoute("/api/cron/statements/$channel")({
 				const missing = missingEnv(channelEnv[channel]);
 				if (missing.length > 0)
 					return Response.json({ skipped: `set ${missing.join(", ")}` });
+				const month = new URL(request.url).searchParams.get("month");
+				if (month !== "current" && month !== "previous")
+					return new Response("Say ?month=current or ?month=previous", {
+						status: 400,
+					});
 				// Failures are kept on marketplace_statements for the Reports tab.
-				return Response.json(await refreshRecentStatements(getDb(), channel));
+				return Response.json(
+					await refreshStatement(getDb(), channel, recentPeriod(month)),
+				);
 			},
 		},
 	},

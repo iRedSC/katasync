@@ -8,6 +8,7 @@ import {
 	STATEMENT_BASIS,
 	STATEMENT_NAME,
 	STATEMENT_TITLE,
+	statementCaveat,
 	statementView,
 } from "#/reports/statements/view";
 
@@ -174,6 +175,9 @@ export function StatementBlock({ r }: { r: StatementResult }) {
 			<p className="text-[8.5pt] text-muted-foreground">
 				{STATEMENT_BASIS[r.channel]}
 			</p>
+			{statementCaveat(r) && (
+				<p className="font-medium text-critical-text">{statementCaveat(r)}</p>
+			)}
 			{view.kind === "table" ? (
 				<>
 					<Table

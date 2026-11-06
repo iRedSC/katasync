@@ -27,6 +27,7 @@ import {
 	STATEMENT_BASIS,
 	STATEMENT_NAME,
 	STATEMENT_TITLE,
+	statementCaveat,
 	statementSummary,
 	statementView,
 } from "./statements/view";
@@ -74,6 +75,11 @@ export const internationalTax = (d: {
 		.filter((r) => r.source === "shopify")
 		.reduce((s, r) => s + r.marketplaceTax, 0);
 
+function caveat(r: StatementResult) {
+	const why = statementCaveat(r);
+	return why ? `<p class="flag">${escapeHtml(why)}</p>` : "";
+}
+
 function statementBlock(
 	r: StatementResult,
 	usd: (n: number | null) => string,
@@ -84,7 +90,7 @@ function statementBlock(
 			r.error ? `Not read: ${r.error}` : "Not read yet",
 		)}</p>`;
 	const view = statementView(r.statement);
-	const head = `<h3>${escapeHtml(name)}: ${escapeHtml(STATEMENT_TITLE[r.channel])}</h3><p class="basis">${escapeHtml(STATEMENT_BASIS[r.channel])}</p>`;
+	const head = `<h3>${escapeHtml(name)}: ${escapeHtml(STATEMENT_TITLE[r.channel])}</h3><p class="basis">${escapeHtml(STATEMENT_BASIS[r.channel])}</p>${caveat(r)}`;
 	if (view.kind === "table") {
 		const cell = (n: number, i: number) => (view.columns[i].count ? n : usd(n));
 		return `${head}${table(
@@ -132,19 +138,21 @@ export function printHtml(d: ReportData, meta: RevisionMeta): string {
 		.reduce((s, r) => s + (r.status === "sent" ? r.amount : 0), 0);
 	const missingNames = (cs: readonly (keyof typeof STATEMENT_NAME)[]) =>
 		`Missing ${cs.map((c) => STATEMENT_NAME[c]).join(", ")}`;
+	// A sum over figures that aren't the month's yet says so.
+	const soFar = summary.provisional.length > 0 ? " so far" : "";
 	const totals = [
 		[
 			"Net sales",
 			summary.netSales === null
 				? missingNames(summary.netSalesMissing)
-				: usd(summary.netSales),
+				: `${usd(summary.netSales)}${soFar}`,
 		],
 		["Sales tax you collected", usd(all.ourTax)],
 		[
 			"Tax paid by marketplaces",
 			summary.marketplaceTax === null
 				? missingNames(summary.taxMissing)
-				: usd(summary.marketplaceTax),
+				: `${usd(summary.marketplaceTax)}${soFar}`,
 		],
 		["Paid out", usd(sent)],
 	]

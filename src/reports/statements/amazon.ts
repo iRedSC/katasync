@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { spApi } from "#/channels/amazon-api";
+import { MARKETPLACE_US, spApi } from "#/channels/amazon-api";
 import {
 	cents,
 	type Statement,
@@ -18,7 +18,7 @@ import type { MonthWindow } from "./window";
 // and whatever a transaction's breakdowns don't itemize is listed too, so the
 // month always adds up to Amazon's own transaction totals.
 
-const money = type({ currencyAmount: "number" });
+const money = type({ currencyAmount: "number", "currencyCode?": "string" });
 const breakdown = type
 	.scope({
 		breakdown: {
@@ -37,6 +37,7 @@ export const amazonStatementTransaction = type({
 	transactionType: "string",
 	"postedDate?": "string",
 	"totalAmount?": money,
+	"marketplaceDetails?": type({ "marketplaceId?": "string" }).or("null"),
 	"relatedIdentifiers?": type({
 		relatedIdentifierName: "string",
 		relatedIdentifierValue: "string",
@@ -206,6 +207,17 @@ export function amazonStatement(
 	};
 	for (const t of transactions) {
 		if (isReleaseCopy(t)) continue;
+		// The account's other marketplaces (Canada, Mexico) are theirs. Asked
+		// without a marketplace, since that filter also drops orders we ship
+		// ourselves, so they're set aside here.
+		const market = t.marketplaceDetails?.marketplaceId;
+		if (market && market !== MARKETPLACE_US) continue;
+		// Never added into dollars: the month fails instead, and says why.
+		const currency = t.totalAmount?.currencyCode;
+		if (currency && currency !== "USD")
+			throw new Error(
+				`Amazon posted a ${t.transactionType} in ${currency} for the US marketplace`,
+			);
 		const n = network(t);
 		let itemized = 0;
 		for (const top of t.breakdowns ?? [])

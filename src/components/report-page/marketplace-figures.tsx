@@ -14,6 +14,7 @@ import {
 	STATEMENT_BASIS,
 	STATEMENT_NAME,
 	STATEMENT_TITLE,
+	statementCaveat,
 	statementView,
 } from "#/reports/statements/view";
 import { readMarketplaceFigures } from "#/server/reports";
@@ -175,6 +176,11 @@ function Body({ r }: { r: Extract<StatementResult, { state: "read" }> }) {
 			<p className="border-t px-4 py-2 text-muted-foreground">
 				{STATEMENT_BASIS[r.channel]}
 			</p>
+			{statementCaveat(r) && (
+				<p className="border-t px-4 py-2 font-medium text-warning-text">
+					{statementCaveat(r)}
+				</p>
+			)}
 			<div className="overflow-x-auto">
 				{view.kind === "table" ? (
 					<table className="w-full">

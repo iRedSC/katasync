@@ -14,6 +14,8 @@ export function reportDataFixture(over: Partial<Current> = {}): Current {
 			{
 				channel: "ebay",
 				state: "read",
+				complete: true,
+				lastError: null,
 				statement: {
 					channel: "ebay",
 					window: {

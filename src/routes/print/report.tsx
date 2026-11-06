@@ -243,11 +243,15 @@ function OnePage({ children }: { children: ReactNode }) {
 // A figure that needs a marketplace not read yet says which, instead of
 // printing a partial sum as if it were the whole.
 type Figure =
-	| { kind: "amount"; value: number }
+	| { kind: "amount"; value: number; soFar?: boolean }
 	| { kind: "missing"; from: StatementChannel[] };
 
-const figureOf = (value: number | null, from: StatementChannel[]): Figure =>
-	value === null ? { kind: "missing", from } : { kind: "amount", value };
+const figureOf = (
+	value: number | null,
+	from: StatementChannel[],
+	soFar: boolean,
+): Figure =>
+	value === null ? { kind: "missing", from } : { kind: "amount", value, soFar };
 
 function Totals({ d }: { d: Data }) {
 	const summary = statementSummary(d.statements, internationalTax(d));
@@ -259,7 +263,11 @@ function Totals({ d }: { d: Data }) {
 	const figures: [string, Figure, string][] = [
 		[
 			"Net sales",
-			figureOf(summary.netSales, summary.netSalesMissing),
+			figureOf(
+				summary.netSales,
+				summary.netSalesMissing,
+				summary.provisional.length > 0,
+			),
 			"border-info-icon",
 		],
 		[
@@ -269,7 +277,11 @@ function Totals({ d }: { d: Data }) {
 		],
 		[
 			"Tax paid by marketplaces",
-			figureOf(summary.marketplaceTax, summary.taxMissing),
+			figureOf(
+				summary.marketplaceTax,
+				summary.taxMissing,
+				summary.provisional.length > 0,
+			),
 			"border-black/25",
 		],
 		["Paid out", { kind: "amount", value: sent }, "border-success-icon"],
@@ -281,7 +293,14 @@ function Totals({ d }: { d: Data }) {
 					<dt className="text-[9.5pt]">{label}</dt>
 					<dd className="text-[15pt] font-bold tabular-nums">
 						{f.kind === "amount" ? (
-							formatMoney(f.value)
+							<>
+								{formatMoney(f.value)}
+								{f.soFar && (
+									<span className="ml-1 text-[9pt] font-normal text-warning-text">
+										so far
+									</span>
+								)}
+							</>
 						) : (
 							<span className="text-[10pt] text-critical-text">
 								Missing {f.from.map((c) => STATEMENT_NAME[c]).join(", ")}
