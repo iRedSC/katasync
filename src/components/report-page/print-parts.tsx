@@ -259,6 +259,7 @@ export function ChannelSummary({
 						salesChannelChip(r.label === "Shop app" ? "Shop" : r.label)
 					) : (
 						<ChannelBadge
+							key="chip"
 							channel={r.channel}
 							salesChannel={null}
 							label={r.label}

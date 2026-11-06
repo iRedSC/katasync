@@ -300,8 +300,8 @@ export function channelSummary(
 					},
 				];
 			}
-			case "tiktok":
-				return [];
 		}
+		// TikTok, left out above.
+		return [];
 	});
 }
