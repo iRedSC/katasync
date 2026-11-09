@@ -1,7 +1,7 @@
 import NumberFlow from "@number-flow/react";
 import { createFileRoute, Link, type LinkProps } from "@tanstack/react-router";
 import { Badge, Card, Page } from "#/components/page";
-import { PriorityScore } from "#/components/priority-score";
+import { PriorityRank } from "#/components/priority-score";
 import { ProductImage, ProductName } from "#/components/product";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { formatCount, formatMoney } from "#/lib/format";
@@ -88,13 +88,13 @@ function Home() {
 							Profit lost if these wait a week to be ordered.
 						</p>
 						<ul>
-							{d.atRisk.slice(0, 6).map((r) => (
+							{d.atRisk.slice(0, 6).map((r, i) => (
 								<ProductRow key={r.sku} {...r}>
 									<span className="flex items-center gap-3">
 										<span className="font-semibold text-critical-text tabular-nums">
 											{formatMoney(r.priority.atRisk)}
 										</span>
-										<PriorityScore priority={r.priority} />
+										<PriorityRank priority={r.priority} rank={i + 1} />
 									</span>
 								</ProductRow>
 							))}

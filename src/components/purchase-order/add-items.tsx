@@ -1,5 +1,12 @@
 import { Loader2 } from "lucide-react";
-import { type RefObject, useEffect, useMemo, useState } from "react";
+import {
+	type RefObject,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { toast } from "sonner";
 import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
@@ -9,11 +16,11 @@ import { SortHeader } from "#/components/sort-header";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney } from "#/lib/format";
 import { ids } from "#/lib/optimism";
+import { cn } from "#/lib/utils";
 import { productLanguage } from "#/products/language";
 import { facetsOf, sortValuesOf, stateOf } from "#/products/rows";
 import { type Filter, facetCounts, parseQuery } from "#/products/search";
 import type { Sort } from "#/products/sort";
-import { orderedItems } from "#/purchasing/sets";
 import {
 	addProductToPurchaseOrder,
 	addRecommended,
@@ -31,11 +38,15 @@ import {
 	remoteWords,
 } from "./add-items/candidates";
 import { Row } from "./add-items/row";
+import { ADD_MIN_WIDTH, AddColumns } from "./columns";
 import { browseLine, recommendedLine } from "./new-lines";
 import { isUnsent, poData } from "./po-data";
 import { useAction } from "./use-action";
 
 const PAGE = 100;
+// How long after an add settles the list keeps its place on screen, for the
+// reload that follows it.
+const SETTLE_MS = 1500;
 // One array, so a sent PO's rows aren't rebuilt on every render.
 const NO_RECS: PurchaseOrderDetail["recommended"] = [];
 
@@ -68,7 +79,10 @@ export function AddItems({
 	const sent = !draft;
 	const [query, setQuery] = useState("");
 	const [chips, setChips] = useState<Filter[]>([]);
-	const [sort, setSort] = useState<Sort<Key>>([]);
+	// Priority first: what to buy before anything else.
+	const [sort, setSort] = useState<Sort<Key>>([
+		{ key: "priority", desc: false },
+	]);
 	const [shown, setShown] = useState(PAGE);
 	// The off-list product whose add is on its way, so its button can say so.
 	const [adding, setAdding] = useState<number | null>(null);
@@ -106,6 +120,7 @@ export function AddItems({
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a new load is a new now
 	const now = useMemo(() => new Date(), [catalog]);
+	const ranks = d.priority.ranks;
 	const prepared = useMemo(
 		() =>
 			new Map(
@@ -120,12 +135,16 @@ export function AddItems({
 						{
 							row,
 							facets: { ...facets, text: [...facets.text, ...extra] },
-							values: sortValuesOf(row, state),
+							// Ranked among this supplier's products, not the catalog.
+							values: {
+								...sortValuesOf(row, state),
+								priority: ranks[row.id] ?? null,
+							},
 						},
 					] satisfies [number, Prepared];
 				}),
 			),
-		[catalog, now],
+		[catalog, now, ranks],
 	);
 	const counts = useMemo(
 		() => facetCounts([...prepared.values()].map((p) => p.facets)),
@@ -140,9 +159,6 @@ export function AddItems({
 	);
 
 	const onPo = new Map(d.lines.map((l) => [l.productId, l.id]));
-	// What the PO already orders of each product, e.g. as a set's part, so
-	// After PO counts it alongside the row's own quantity.
-	const items = orderedItems(d.lines, d.setParts, d.supplier.id);
 	const short = d.supplier.minimumOrder - total;
 
 	function changeSort(next: Sort<Key>) {
@@ -214,6 +230,50 @@ export function AddItems({
 		return id;
 	}
 
+	// Adding from the list puts a line on the PO above it and takes the row out
+	// of it, which would push the list down under the pointer. While an add
+	// settles, the page scrolls by however far the list moved, so it stays
+	// where it was on screen and the next row is under the pointer.
+	const listRef = useRef<HTMLDivElement>(null);
+	const anchor = useRef<{ top: number; until: number } | null>(null);
+	useLayoutEffect(() => {
+		const a = anchor.current;
+		const el = listRef.current;
+		if (!a || !el) return;
+		if (Date.now() > a.until) {
+			anchor.current = null;
+			document.documentElement.style.overflowAnchor = "";
+			return;
+		}
+		const moved = el.getBoundingClientRect().top - a.top;
+		if (Math.abs(moved) >= 1) window.scrollBy(0, moved);
+	});
+	// Leaving mid-add hands scrolling back to the browser.
+	useEffect(
+		() => () => {
+			document.documentElement.style.overflowAnchor = "";
+		},
+		[],
+	);
+	function addInPlace(c: Candidate) {
+		const el = listRef.current;
+		if (el) {
+			// A second add while one settles keeps the first one's place.
+			const top = anchor.current?.top ?? el.getBoundingClientRect().top;
+			const until = Date.now() + SETTLE_MS;
+			anchor.current = { top, until };
+			// The browser's own scroll anchoring would correct the same move
+			// again.
+			document.documentElement.style.overflowAnchor = "none";
+			setTimeout(() => {
+				if (anchor.current?.until !== until) return;
+				anchor.current = null;
+				document.documentElement.style.overflowAnchor = "";
+			}, SETTLE_MS);
+		}
+		add(c);
+	}
+
 	// Enter: the first row goes on and its quantity opens, as a scan wants.
 	// One already on the PO opens its line instead.
 	async function submit() {
@@ -254,171 +314,170 @@ export function AddItems({
 	// The empty box keeps its recommendations up while the rest loads.
 	const loading = load.state === "loading" && (searching || rows.length === 0);
 	return (
-		<Card
-			flush
-			// Suggestions open below the box, past the card's edge when the list
-			// is short.
-			className="overflow-visible"
-			title="Add more items"
-			aside={draft && short > 0 ? `${formatMoney(short)} short` : undefined}
-		>
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: Escape clears, then leaves the box */}
-			<div
-				className="flex items-start gap-1 px-4 pb-3"
-				onKeyDown={(e) => {
-					if (e.key !== "Escape" || e.target !== inputRef.current) return;
-					e.stopPropagation();
-					if (query || chips.length) {
-						setQuery("");
-						setChips([]);
-					} else inputRef.current?.blur();
-				}}
+		<div ref={listRef}>
+			<Card
+				flush
+				// Suggestions open below the box, past the card's edge when the list
+				// is short.
+				className="overflow-visible"
+				title="Add more items"
+				aside={draft && short > 0 ? `${formatMoney(short)} short` : undefined}
 			>
-				<div className="relative min-w-0 flex-1">
-					<FilterSearch
-						inputRef={inputRef}
-						text={query}
-						onText={(t) => {
-							setQuery(t);
-							setShown(PAGE);
-						}}
-						chips={chips}
-						onChips={(next) => {
-							setChips(next);
-							setShown(PAGE);
-						}}
-						language={language}
-						sorting={{ sort, onSort: changeSort, columns: COLUMNS }}
-						placeholder="Name, SKU, barcode, their SKU, or %status *class ^sort"
-						onSubmit={submit}
-					/>
-				</div>
-				<AddFilter
-					counts={counts}
-					onAdd={(f) => {
-						setChips([...chips, f]);
-						setShown(PAGE);
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: Escape clears, then leaves the box */}
+				<div
+					className="flex items-start gap-1 px-4 pb-3"
+					onKeyDown={(e) => {
+						if (e.key !== "Escape" || e.target !== inputRef.current) return;
+						e.stopPropagation();
+						if (query || chips.length) {
+							setQuery("");
+							setChips([]);
+						} else inputRef.current?.blur();
 					}}
-				/>
-				<SortMenu sort={sort} onSort={changeSort} columns={COLUMNS} />
-				{(remote.state === "pending" ||
-					(!searching && load.state === "loading")) && (
-					<Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
+				>
+					<div className="relative min-w-0 flex-1">
+						<FilterSearch
+							inputRef={inputRef}
+							text={query}
+							onText={(t) => {
+								setQuery(t);
+								setShown(PAGE);
+							}}
+							chips={chips}
+							onChips={(next) => {
+								setChips(next);
+								setShown(PAGE);
+							}}
+							language={language}
+							sorting={{ sort, onSort: changeSort, columns: COLUMNS }}
+							placeholder="Name, SKU, barcode, their SKU, or %status *class ^sort"
+							onSubmit={submit}
+						/>
+					</div>
+					<AddFilter
+						counts={counts}
+						onAdd={(f) => {
+							setChips([...chips, f]);
+							setShown(PAGE);
+						}}
+					/>
+					<SortMenu sort={sort} onSort={changeSort} columns={COLUMNS} />
+					{(remote.state === "pending" ||
+						(!searching && load.state === "loading")) && (
+						<Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
+					)}
+				</div>
+				{load.state === "failed" && (searching || rows.length === 0) ? (
+					<div className="flex flex-col items-center gap-3 border-t px-4 py-10">
+						<p className="text-critical-text">{load.message}</p>
+						<Button variant="outline" onClick={() => setAttempt((n) => n + 1)}>
+							Try again
+						</Button>
+					</div>
+				) : loading ? (
+					<p className="flex items-center justify-center gap-2 border-t px-4 py-10 text-muted-foreground">
+						<Loader2 className="size-4 animate-spin" />
+						Loading
+					</p>
+				) : remote.state === "failed" && rows.length === 0 ? (
+					<div className="flex flex-col items-center gap-3 border-t px-4 py-10">
+						<p className="text-critical-text">{remote.message}</p>
+						<Button variant="outline" onClick={retry}>
+							Try again
+						</Button>
+					</div>
+				) : rows.length === 0 && remote.state === "pending" ? (
+					<p className="flex items-center justify-center gap-2 border-t px-4 py-10 text-muted-foreground">
+						<Loader2 className="size-4 animate-spin" />
+						Searching
+					</p>
+				) : rows.length === 0 ? (
+					<p className="border-t px-4 py-6 text-center text-muted-foreground">
+						{searching ? "No matches" : "This supplier sells nothing yet"}
+					</p>
+				) : (
+					<div className="overflow-x-auto border-t">
+						{/* The recommendations still work; only the rest of the list is missing. */}
+						{load.state === "failed" && (
+							<div className="flex items-center justify-between gap-3 border-b bg-critical-surface px-4 py-2 text-sm">
+								<span className="text-critical-text">
+									The rest of this supplier's list: {load.message}
+								</span>
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => setAttempt((n) => n + 1)}
+								>
+									Try again
+								</Button>
+							</div>
+						)}
+						{/* This supplier's rows still work; only anyone else's are missing. */}
+						{remote.state === "failed" && (
+							<div className="flex items-center justify-between gap-3 border-b bg-critical-surface px-4 py-2 text-sm">
+								<span className="text-critical-text">
+									Other suppliers' products: {remote.message}
+								</span>
+								<Button size="sm" variant="outline" onClick={retry}>
+									Try again
+								</Button>
+							</div>
+						)}
+						{/* Laid out like the draft's lines above, read-only until added. */}
+						<table
+							className={cn(
+								"w-full table-fixed [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap",
+								ADD_MIN_WIDTH,
+							)}
+						>
+							<AddColumns />
+							<thead>
+								<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
+									{header("name", "Product", "px-4")}
+									{header("onhand", "Stock", "text-right")}
+									{header(
+										"sales",
+										"Sales",
+										"text-right",
+										"Units sold in 30 days. Hover one for a week to a year",
+									)}
+									{header(
+										"priority",
+										"Priority",
+										"text-center",
+										"Which of this supplier's products to buy first. The color says whether it needs buying",
+									)}
+									{header("qty", "Add", "px-4 text-right", "What Add puts on")}
+								</tr>
+							</thead>
+							<tbody>
+								{rows.slice(0, shown).map((c) => (
+									<Row
+										key={c.productId}
+										c={c}
+										rank={d.priority.ranks[c.productId] ?? null}
+										lineId={onPo.get(c.productId)}
+										adding={adding === c.productId}
+										disabled={busy}
+										onAdd={() => addInPlace(c)}
+										onGoToLine={onFocusLine}
+									/>
+								))}
+							</tbody>
+						</table>
+						{shown < rows.length && (
+							<div className="flex justify-center border-t py-3">
+								<Button
+									variant="outline"
+									onClick={() => setShown((n) => n + PAGE)}
+								>
+									Show {formatCount(Math.min(PAGE, rows.length - shown))} more
+								</Button>
+							</div>
+						)}
+					</div>
 				)}
-			</div>
-			{load.state === "failed" && (searching || rows.length === 0) ? (
-				<div className="flex flex-col items-center gap-3 border-t px-4 py-10">
-					<p className="text-critical-text">{load.message}</p>
-					<Button variant="outline" onClick={() => setAttempt((n) => n + 1)}>
-						Try again
-					</Button>
-				</div>
-			) : loading ? (
-				<p className="flex items-center justify-center gap-2 border-t px-4 py-10 text-muted-foreground">
-					<Loader2 className="size-4 animate-spin" />
-					Loading
-				</p>
-			) : remote.state === "failed" && rows.length === 0 ? (
-				<div className="flex flex-col items-center gap-3 border-t px-4 py-10">
-					<p className="text-critical-text">{remote.message}</p>
-					<Button variant="outline" onClick={retry}>
-						Try again
-					</Button>
-				</div>
-			) : rows.length === 0 && remote.state === "pending" ? (
-				<p className="flex items-center justify-center gap-2 border-t px-4 py-10 text-muted-foreground">
-					<Loader2 className="size-4 animate-spin" />
-					Searching
-				</p>
-			) : rows.length === 0 ? (
-				<p className="border-t px-4 py-6 text-center text-muted-foreground">
-					{searching ? "No matches" : "This supplier sells nothing yet"}
-				</p>
-			) : (
-				<div className="overflow-x-auto border-t">
-					{/* The recommendations still work; only the rest of the list is missing. */}
-					{load.state === "failed" && (
-						<div className="flex items-center justify-between gap-3 border-b bg-critical-surface px-4 py-2 text-sm">
-							<span className="text-critical-text">
-								The rest of this supplier's list: {load.message}
-							</span>
-							<Button
-								size="sm"
-								variant="outline"
-								onClick={() => setAttempt((n) => n + 1)}
-							>
-								Try again
-							</Button>
-						</div>
-					)}
-					{/* This supplier's rows still work; only anyone else's are missing. */}
-					{remote.state === "failed" && (
-						<div className="flex items-center justify-between gap-3 border-b bg-critical-surface px-4 py-2 text-sm">
-							<span className="text-critical-text">
-								Other suppliers' products: {remote.message}
-							</span>
-							<Button size="sm" variant="outline" onClick={retry}>
-								Try again
-							</Button>
-						</div>
-					)}
-					{/* Laid out like the draft's lines above, read-only until added. */}
-					<table className="w-full [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
-						<thead>
-							<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
-								{header("name", "Product", "px-4")}
-								{header("theirsku", "Their SKU")}
-								{header("minimum", "MOQ / UOM")}
-								{header("due", "Due")}
-								{header("qty", "Qty", "text-right")}
-								{header("onhand", "On hand → After PO", "text-center")}
-								{header(
-									"velocity",
-									"Velocity",
-									"text-center",
-									"Units sold a month",
-								)}
-								{header(
-									"priority",
-									"Priority",
-									"text-center",
-									"Profit a week's wait would lose",
-								)}
-								{header("cost", "Cost", "text-right")}
-								{header("amount", "Amount", "text-right")}
-								<th className="px-4 py-2" />
-							</tr>
-						</thead>
-						<tbody>
-							{rows.slice(0, shown).map((c) => (
-								<Row
-									key={c.productId}
-									c={c}
-									lineId={onPo.get(c.productId)}
-									ordered={
-										(items.get(c.productId) ?? 0) +
-										(onPo.has(c.productId) ? 0 : c.quantity * c.packSize)
-									}
-									adding={adding === c.productId}
-									disabled={busy}
-									onAdd={() => add(c)}
-									onGoToLine={onFocusLine}
-								/>
-							))}
-						</tbody>
-					</table>
-					{shown < rows.length && (
-						<div className="flex justify-center border-t py-3">
-							<Button
-								variant="outline"
-								onClick={() => setShown((n) => n + PAGE)}
-							>
-								Show {formatCount(Math.min(PAGE, rows.length - shown))} more
-							</Button>
-						</div>
-					)}
-				</div>
-			)}
-		</Card>
+			</Card>
+		</div>
 	);
 }
