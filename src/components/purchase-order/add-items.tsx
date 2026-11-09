@@ -245,8 +245,13 @@ export function AddItems({
 			document.documentElement.style.overflowAnchor = "";
 			return;
 		}
-		const moved = el.getBoundingClientRect().top - a.top;
-		if (Math.abs(moved) >= 1) window.scrollBy(0, moved);
+		// How far the layout above pushed it, apart from any scrolling: what
+		// the person scrolls stays theirs.
+		const top = el.getBoundingClientRect().top + window.scrollY;
+		const moved = top - a.top;
+		if (Math.abs(moved) < 1) return;
+		a.top = top;
+		window.scrollBy(0, moved);
 	});
 	// Leaving mid-add hands scrolling back to the browser.
 	useEffect(
@@ -259,7 +264,10 @@ export function AddItems({
 		const el = listRef.current;
 		if (el) {
 			// A second add while one settles keeps the first one's place.
-			const top = anchor.current?.top ?? el.getBoundingClientRect().top;
+			// Where it sits in the page, not the window, so scrolling isn't
+			// read as the layout moving.
+			const top =
+				anchor.current?.top ?? el.getBoundingClientRect().top + window.scrollY;
 			const until = Date.now() + SETTLE_MS;
 			anchor.current = { top, until };
 			// The browser's own scroll anchoring would correct the same move
