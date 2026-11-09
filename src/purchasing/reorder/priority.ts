@@ -143,6 +143,7 @@ export type Priority = {
 	// doesn't sell, so never runs out.
 	coverDays: number | null;
 	onHand: number;
+	leadTimeDays: number;
 	// Units sold in the last year: breaks ties between sellers whose profit
 	// can't be told apart, such as parts that sell inside sets.
 	soldYear: number;
@@ -251,48 +252,72 @@ export function priorityOf(p: PriorityInput): Priority {
 		steadiness,
 		coverDays: coverOf(p.onHand, p.dailyDemand, p.incoming, lead),
 		onHand: p.onHand,
+		leadTimeDays: lead,
 		soldYear: p.soldYear,
 		unitCost: p.unitCost,
 	};
 }
 
-// Which group a product ranks in, first to last: proven ones losing profit
-// or sitting at zero, unproven ones at zero (cut them, or stock them to find
-// out), unproven ones with stock, the fewer the sooner, then proven ones that
-// are covered. Unproven never crowd out a proven seller running low.
-function bandOf(p: Priority) {
-	if (p.proven) return p.tone === "red" || p.tone === "orange" ? 0 : 3;
-	return p.onHand <= 0 ? 1 : 2;
+// The order is one scale, what a day of it earns weighed by how soon it's
+// needed, so the color never decides it. A seller out or running out before
+// a PO could land counts its whole day; every spare day of stock past that
+// fades it, so a big seller with a month's stock spare sinks below a small
+// one at zero. Products that haven't sold in a year count a deliberately
+// small guess, halved for each one on hand: none on hand sits above sellers
+// with stock to spare, and UNPROVEN_DEAD or more on hand goes below
+// everything that sells.
+
+// Spare days of stock that fade a seller to about a third.
+export const SPARE_FADE_DAYS = 10;
+// From this many on hand, a product with no sales is dead stock: last.
+export const UNPROVEN_DEAD = 3;
+// What one is guessed to earn when nothing says: half its cost a sale, at
+// least this cost, one sale a year.
+const GUESS_FLOOR_COST = 10;
+const GUESS_MARGIN = 0.5;
+// An unsold product's guess counts at most this cost, so an expensive one
+// that never sold can't pass for a seller running low.
+const UNPROVEN_CAP_COST = 365;
+const guessDaily = (unitCost: number | null, perYear: number) =>
+	(Math.max(unitCost ?? 0, GUESS_FLOOR_COST) * GUESS_MARGIN * perYear) /
+	YEAR_DAYS;
+
+// What a day of it is worth for ranking: what it earns, or for sales without
+// a cost (or only inside sets that sold too seldom to count), a guess from
+// the units.
+function dailyValue(p: Priority) {
+	const earned = p.own + p.sets;
+	if (!p.proven)
+		return guessDaily(Math.min(p.unitCost ?? 0, UNPROVEN_CAP_COST), 1);
+	return earned > 0 ? earned : guessDaily(p.unitCost, p.soldYear);
 }
 
-// Each extra unit an unproven product has on hand halves its chance of
-// selling out before anyone learns whether it sells.
-const unprovenChance = (onHand: number) => 0.5 ** Math.max(onHand, 0);
-
-// Within a group, the more it stands to lose, the sooner.
-function weightOf(p: Priority) {
-	switch (bandOf(p)) {
-		case 0:
-			return p.atRisk;
-		case 1:
-			return p.unitCost ?? 0;
-		case 2:
-			return (p.unitCost ?? 0) * unprovenChance(p.onHand);
-		default:
-			return (p.own + p.sets) / ((p.coverDays ?? Number.POSITIVE_INFINITY) + 1);
-	}
+// How much of its day counts now: all of it while it runs out before a PO
+// could land, fading with each spare day past that.
+function urgency(p: Priority) {
+	if (!p.proven) return 0.5 ** Math.max(p.onHand, 0);
+	if (p.coverDays === null) return 0;
+	const spare = Math.max(0, p.coverDays - p.leadTimeDays);
+	return Math.exp(-spare / SPARE_FADE_DAYS);
 }
 
-// Orders any list most urgent first: by group, then what it stands to lose,
-// then what it earns, then what it sold, then the less on hand. Null (not
-// counted) goes last.
+const isDead = (p: Priority) => !p.proven && p.onHand >= UNPROVEN_DEAD;
+
+export const rankWeight = (p: Priority) => dailyValue(p) * urgency(p);
+
+// Orders any list most urgent first: by weight, then units sold in the
+// year, then fewer on hand. Dead stock goes after everything else, the less
+// of it first, and null (not counted) after that.
 export function comparePriority(a: Priority | null, b: Priority | null) {
 	if (a === null || b === null)
 		return (a === null ? 1 : 0) - (b === null ? 1 : 0);
+	if (isDead(a) || isDead(b))
+		return (
+			Number(isDead(a)) - Number(isDead(b)) ||
+			(isDead(a) ? a.onHand - b.onHand : 0)
+		);
 	return (
-		bandOf(a) - bandOf(b) ||
-		weightOf(b) - weightOf(a) ||
-		b.own + b.sets - (a.own + a.sets) ||
+		rankWeight(b) - rankWeight(a) ||
 		b.soldYear - a.soldYear ||
 		a.onHand - b.onHand
 	);

@@ -153,46 +153,98 @@ describe("priorityOf tones", () => {
 });
 
 describe("comparePriority", () => {
-	const rank = (list: PriorityInput[]) => {
+	const order = (list: [string, PriorityInput][]) => {
 		const ranks = priorityRanks(
-			list.map((p, id) => ({ id, p: priorityOf(p) })),
+			list.map(([, p], id) => ({ id, p: priorityOf(p) })),
 			(x) => x.id,
 			(x) => x.p,
 		);
-		return list.map((_, id) => ranks.get(id));
+		return [...list.keys()]
+			.sort((x, y) => (ranks.get(x) ?? 0) - (ranks.get(y) ?? 0))
+			.map((i) => list[i][0]);
 	};
+	// A big seller: $70 an order, weekly, one unit a day.
+	const seller = (onHand: number): PriorityInput => ({ ...base, onHand });
+	// A slow one: one $20 sale in the year.
+	const slow = (onHand: number): PriorityInput => ({
+		...base,
+		orders: [{ day: -100, profit: 20 }],
+		soldYear: 1,
+		dailyDemand: 1 / 365,
+		onHand,
+		needsOrder: false,
+	});
 
-	test("spreads covered sellers instead of tying them: a little stock outranks a lot", () => {
-		// Both sell one a month and are covered past the week.
-		const slow = {
-			...base,
-			orders: [{ day: 10, profit: 20 }],
-			dailyDemand: 1 / 30,
+	test("your order: selling low or out first, dead stock last", () => {
+		expect(
+			order([
+				["high stock, no sales", unproven(500)],
+				["high stock, low sales", slow(200)],
+				["low stock, no sales", unproven(1)],
+				["no stock, no sales", unproven(0)],
+				["no stock, high sales", seller(0)],
+			]),
+		).toEqual([
+			"no stock, high sales",
+			"no stock, no sales",
+			"low stock, no sales",
+			"high stock, low sales",
+			"high stock, no sales",
+		]);
+	});
+
+	test("a high seller with more than a month spare sinks below a small one at zero", () => {
+		const small = { ...slow(0), orders: weekly(5), dailyDemand: 0.2 };
+		expect(
+			order([
+				["big, 60 days on hand", seller(60)],
+				["small, out", small],
+			]),
+		).toEqual(["small, out", "big, 60 days on hand"]);
+	});
+
+	test("a high seller a little short of a month still beats a small one at zero", () => {
+		const small = { ...slow(0), orders: [{ day: 10, profit: 5 }] };
+		expect(
+			order([
+				["small, out", small],
+				["big, 20 days on hand", seller(20)],
+			]),
+		).toEqual(["big, 20 days on hand", "small, out"]);
+	});
+
+	test("the less stock a seller has, the sooner", () => {
+		expect(
+			order([
+				["30 on hand", seller(30)],
+				["3 on hand", seller(3)],
+				["18 on hand", seller(18)],
+			]),
+		).toEqual(["3 on hand", "18 on hand", "30 on hand"]);
+	});
+
+	test("no cost doesn't sink a product: 1 on hand beats 555", () => {
+		expect(
+			order([
+				["555, cheap", { ...unproven(555), unitCost: 0.7 }],
+				["1, no cost", { ...unproven(1), unitCost: null }],
+			]),
+		).toEqual(["1, no cost", "555, cheap"]);
+	});
+
+	test("an expensive product that never sold can't pass a seller running low", () => {
+		const low = {
+			...slow(1),
+			orders: weekly(10),
+			dailyDemand: 0.1,
+			soldYear: 13,
 		};
 		expect(
-			rank([
-				{ ...slow, onHand: 500 },
-				{ ...slow, onHand: 2 },
+			order([
+				["unsold, $4,000, none", { ...unproven(0), unitCost: 4000 }],
+				["$10 a week, 1 left", low],
 			]),
-		).toEqual([2, 1]);
-	});
-
-	test("a seller losing profit comes before any unproven product", () => {
-		expect(rank([unproven(0, 999), { ...base, onHand: 5 }])).toEqual([2, 1]);
-	});
-
-	test("unproven at zero, then unproven with stock, then covered sellers", () => {
-		const covered = { ...base, onHand: 500, needsOrder: false };
-		expect(rank([covered, unproven(4), unproven(0)])).toEqual([3, 2, 1]);
-	});
-
-	test("unproven ones with less stock come first, falling off fast", () => {
-		expect(rank([unproven(4), unproven(1), unproven(2)])).toEqual([3, 1, 2]);
-	});
-
-	test("the more a seller loses, the sooner", () => {
-		const big = { ...base, orders: weekly(200), onHand: 5 };
-		expect(rank([{ ...base, onHand: 5 }, big])).toEqual([2, 1]);
+		).toEqual(["$10 a week, 1 left", "unsold, $4,000, none"]);
 	});
 
 	test("not counted goes last", () => {
