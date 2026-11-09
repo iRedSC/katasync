@@ -267,7 +267,17 @@ export function candidateRows({
 				: s,
 		sort,
 	);
-	if (by.length > 0) return sortRows(found, by, (c) => c.values);
+	// Ties fall back to name, never to where a row came from: adding a
+	// recommendation turns it into the supplier's own row, and it must stay
+	// where it was rather than jump to the end of the list.
+	if (by.length > 0)
+		return sortRows(
+			found,
+			by.some((t) => t.key === "name")
+				? by
+				: [...by, { key: "name", desc: false }],
+			(c) => c.values,
+		);
 	const code = q.words.join(" ").toLowerCase();
 	const exact = (c: Candidate) => code !== "" && c.codes.includes(code);
 	return [...found.filter(exact), ...found.filter((c) => !exact(c))];

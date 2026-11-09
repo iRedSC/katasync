@@ -11,7 +11,7 @@ import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { type PartState, shortBySupplier } from "#/purchasing/sets";
 import { addSetToOtherPos, skipPartOfSet } from "#/server/purchasing";
-import { AfterPo } from "./after-po";
+import { SalesCell, StockCell } from "./stock-sales";
 import type { Line, SetPart } from "./types";
 import { useAction } from "./use-action";
 
@@ -23,14 +23,12 @@ export function SetPartRow({
 	part: p,
 	state,
 	sets,
-	ordered,
 	rank,
 }: {
 	line: Line;
 	part: SetPart;
 	state: PartState;
 	sets: number;
-	ordered: number;
 	// Its place among the supplier's products, P1 first.
 	rank: number | null;
 }) {
@@ -126,11 +124,18 @@ export function SetPartRow({
 					)}
 				</td>
 			</Tip>
-			<td className="px-3 py-2">
+			<td className="px-3 py-2 text-right tabular-nums">
 				{here ? (
-					<AfterPo onHand={p.onHand} range={p.stockRange} ordered={ordered} />
+					<StockCell onHand={p.onHand} onOrder={p.why?.onOrder ?? 0} />
 				) : (
-					<span className="block text-center text-muted-foreground">—</span>
+					<span className="text-muted-foreground">—</span>
+				)}
+			</td>
+			<td className="px-3 py-2 text-right tabular-nums">
+				{here ? (
+					<SalesCell sales={p.why?.sales ?? null} />
+				) : (
+					<span className="text-muted-foreground">—</span>
 				)}
 			</td>
 			<td className="px-3 py-2">

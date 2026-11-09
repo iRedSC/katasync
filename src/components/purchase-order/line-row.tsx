@@ -18,7 +18,6 @@ import {
 	type PurchaseOrderDetail,
 	setPurchaseLineTerms,
 } from "#/server/purchasing";
-import { AfterPo } from "./after-po";
 import { PriceField, SupplierSkuField, WasSent } from "./inline-fields";
 import { refusedByDiscounts } from "./line-actions";
 import { AmountCell } from "./line-discounts";
@@ -26,6 +25,7 @@ import { isUnsent, sinceSent } from "./po-data";
 import { draftQuantity, LockToggle, QuantityField } from "./quantity-field";
 import { ReceiveField } from "./receive-field";
 import { AddSetButton } from "./set-parts";
+import { SalesCell, StockCell } from "./stock-sales";
 import type { Line, LineFocus, LineSet } from "./types";
 import { useAction } from "./use-action";
 
@@ -36,7 +36,6 @@ export function LineRow({
 	set,
 	focus,
 	focusedRow,
-	items,
 	previewing,
 	previewFor,
 	toggle,
@@ -50,7 +49,6 @@ export function LineRow({
 	set: LineSet | null;
 	focus: LineFocus | null;
 	focusedRow: RefObject<HTMLTableRowElement | null>;
-	items: Map<number, number>;
 	previewing: boolean;
 	previewFor: (lineId: number) => (quantity: number | null) => void;
 	toggle: (lineId: number, open: boolean) => void;
@@ -262,18 +260,20 @@ export function LineRow({
 				)}
 			</td>
 			{draft && (
-				<td className="px-3 py-2">
+				<td className="px-3 py-2 text-right tabular-nums">
 					{set ? (
-						<div className="flex justify-center">
+						// A set has no stock of its own: how its parts are covered.
+						<div className="flex justify-end">
 							<SetGauge coverage={set.coverage} />
 						</div>
 					) : (
-						<AfterPo
-							onHand={l.onHand}
-							range={l.stockRange}
-							ordered={items.get(l.productId) ?? 0}
-						/>
+						<StockCell onHand={l.onHand} onOrder={l.why?.onOrder ?? 0} />
 					)}
+				</td>
+			)}
+			{draft && (
+				<td className="px-3 py-2 text-right tabular-nums">
+					<SalesCell sales={l.why?.sales ?? null} />
 				</td>
 			)}
 			{draft && (
