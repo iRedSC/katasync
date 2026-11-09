@@ -1,4 +1,4 @@
-import { and, eq, gte, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, lt, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orderLines, orders, products, supplierOffers } from "#/db/schema";
 import type { DemandWindow } from "#/purchasing/forecast";
@@ -64,7 +64,8 @@ export async function loadProfits(
 					eq(supplierOffers.cheapest, true),
 				),
 			)
-			.where(eq(products.kind, "simple")),
+			// Everything with its own stock: kits too, not tool sets.
+			.where(ne(products.kind, "bundle")),
 	]);
 	const costOf = new Map(costs.map((c) => [c.id, c.cost]));
 	const recipeOf = new Map<number, SetRecipeRow[]>();
