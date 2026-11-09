@@ -21,6 +21,7 @@ export const PRODUCT_SORTS = {
 	available: { label: "Available", ...NUMBER },
 	onorder: { label: "On order", ...NUMBER },
 	velocity: { label: "Sold a month", ...NUMBER },
+	priority: { label: "Priority", ...NUMBER },
 	reorder: { label: "To reorder", ...NUMBER },
 	runout: { label: "Runs out", asc: "soonest first", desc: "latest first" },
 	min: { label: "Min stock", ...NUMBER },

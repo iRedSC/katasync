@@ -66,7 +66,6 @@ export const updateSupplier = createServerFn({ method: "POST" })
 			leadTimeDays: "1 <= number.integer <= 365",
 			coverDays: `1 <= number.integer <= ${DEMAND_DAYS}`,
 			minimumOrder: "number >= 0",
-			criticalThreshold: "number.integer >= 1",
 		}),
 	)
 	.handler(async ({ data: { id: supplierId, ...values } }) =>

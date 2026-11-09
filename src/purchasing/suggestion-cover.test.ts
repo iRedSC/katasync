@@ -62,10 +62,6 @@ async function product(sku: string, onHand: number) {
 	await sell(id, 30);
 	await sell(id, 60, { placedAt: daysAgo(60) });
 	await stock(id, onHand);
-	await db
-		.update(schema.products)
-		.set({ critical: true })
-		.where(eq(schema.products.id, id));
 	return id;
 }
 

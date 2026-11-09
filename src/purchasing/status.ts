@@ -71,10 +71,12 @@ export function purchaseOrderStatus(po: {
 	}
 }
 
-// A suggestion not yet on a draft: Order soon once enough essentials need it.
+// A suggestion not yet on a draft: Suggested once it reaches the supplier's
+// spend threshold, Under minimum while it's only shown for the profit it's
+// losing.
 export const suggestionStatus = (
-	readiness: "soon" | "ready",
+	readiness: "ready" | "short",
 ): { label: string; tone: Tone } =>
-	readiness === "soon"
-		? { label: "Order soon", tone: "warning" }
+	readiness === "short"
+		? { label: "Under minimum", tone: "warning" }
 		: { label: "Suggested", tone: "success" };

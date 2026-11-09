@@ -378,6 +378,12 @@ export function AddItems({
 									"text-center",
 									"Units sold a month",
 								)}
+								{header(
+									"priority",
+									"Priority",
+									"text-center",
+									"Profit a week's wait would lose",
+								)}
 								{header("cost", "Cost", "text-right")}
 								{header("amount", "Amount", "text-right")}
 								<th className="px-4 py-2" />

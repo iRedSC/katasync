@@ -190,13 +190,7 @@ export async function suggestPurchases(
 		),
 	);
 	const bySupplier = new Map<number, SupplierSuggestion>();
-	for (const {
-		supplierId,
-		supplierName,
-		minimumOrder,
-		criticalThreshold,
-		...need
-	} of needs) {
+	for (const { supplierId, supplierName, minimumOrder, ...need } of needs) {
 		// At the bulk price its quantity reaches, as its PO line will be, so
 		// the total weighs against the supplier's minimum as it'll be sent.
 		const list = breaks.get(`${need.productId}:${supplierId}`);
@@ -215,18 +209,17 @@ export async function suggestPurchases(
 				supplierId,
 				supplierName,
 				minimumOrder,
-				criticalThreshold,
 				lines: [],
 				total: 0,
 				unpriced: 0,
-				critical: 0,
+				atRisk: 0,
 				readiness: "waiting",
 				draftId: drafts.find((d) => d.supplierId === supplierId)?.id ?? null,
 			};
 			bySupplier.set(supplierId, s);
 		}
 		s.lines.push(line);
-		if (line.critical) s.critical++;
+		s.atRisk += line.priority?.atRisk ?? 0;
 		if (line.unitCost === null) s.unpriced++;
 		else s.total += line.quantity * line.unitCost;
 	}
@@ -234,11 +227,9 @@ export async function suggestPurchases(
 	const result = [...bySupplier.values()];
 	for (const s of result) {
 		s.total = Math.round(s.total * 100) / 100;
+		s.atRisk = Math.round(s.atRisk * 100) / 100;
 		s.readiness = readiness(s);
 	}
-	// Order soon first, then ready, then the biggest orders.
-	const rank = { soon: 0, ready: 1, waiting: 2 } as const;
-	return result.sort(
-		(a, b) => rank[a.readiness] - rank[b.readiness] || b.total - a.total,
-	);
+	// The most profit lost by waiting first, then the biggest orders.
+	return result.sort((a, b) => b.atRisk - a.atRisk || b.total - a.total);
 }

@@ -69,7 +69,6 @@ export type Candidate = {
 	why: Line["why"];
 	otherPos: ComponentProps<typeof OnPoChip>["pos"];
 	bulk: { list: ComponentProps<typeof BulkChip>["list"]; unit: string } | null;
-	critical: boolean;
 	cheaperAt: Recommendation["cheaperAt"];
 	warning: { text: string; blocks: boolean } | null;
 	// What the typed codes match exactly: a scan lands on its product.
@@ -100,6 +99,7 @@ function valuesOf(
 		qty: c.quantity,
 		onhand: c.onHand,
 		velocity: c.why?.dailyDemand ?? null,
+		priority: c.why?.priority?.score ?? null,
 		cost: c.unitCost,
 		amount: c.unitCost === null ? null : c.unitCost * c.quantity,
 	};
@@ -136,7 +136,6 @@ export function fromRec(r: Recommendation, p: Prepared | undefined): Candidate {
 			why: r.why,
 			otherPos: r.otherPos,
 			bulk: r.bulk && { list: r.bulk, unit: r.unit },
-			critical: r.critical,
 			cheaperAt: r.cheaperAt,
 			warning: null,
 			codes: codesOf(r.sku, r.barcode, r.supplierSku),
@@ -173,7 +172,6 @@ export function fromRow(p: Prepared, sent: boolean): Candidate {
 				t && t.breaks.length > 0
 					? { list: { cost: t.cost, breaks: t.breaks }, unit: t.unit }
 					: null,
-			critical: false,
 			cheaperAt: null,
 			// Sets come as their parts on a sent PO, so add those.
 			warning:
@@ -208,7 +206,6 @@ export function fromMatch(m: PurchaseOrderMatch, sent: boolean): Candidate {
 			why: null,
 			otherPos: m.otherPos,
 			bulk: null,
-			critical: false,
 			cheaperAt: null,
 			warning: matchWarning(m, sent),
 			codes: codesOf(m.sku, m.barcode, m.supplierSku),

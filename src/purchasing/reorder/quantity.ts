@@ -1,6 +1,7 @@
 import { afterArrival } from "#/inventory/stock-state";
 import type { Forecast } from "#/purchasing/forecast";
 import type { SetMembership } from "#/purchasing/sets";
+import type { Priority } from "./priority";
 
 // Reorder tops each product up to what it sold over the last cover days,
 // less what's on the shelf and on order. That's the whole rule: no forecast
@@ -157,6 +158,9 @@ export type ReorderWhy = {
 		| { kind: "later"; days: number }
 		// No sales and nothing below min: nothing will ever need ordering.
 		| { kind: "idle" };
+	// What waiting a week would cost, or null when it can't be valued (no
+	// cost, or not counted).
+	priority: Priority | null;
 };
 
 // Explains reorderQuantity's answer for `p` using the same functions, so the
@@ -170,7 +174,7 @@ export function explainReorder(
 		purchase: ReorderWhy["purchase"];
 		sets: SetMembership;
 	},
-): ReorderWhy {
+): Omit<ReorderWhy, "priority"> {
 	const floor = floorOf(p);
 	const minFrom: ReorderWhy["minFrom"] =
 		oversoldFloor(p) > Math.max(p.minStock, p.setFloor)

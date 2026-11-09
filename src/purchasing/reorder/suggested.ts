@@ -1,4 +1,4 @@
-import type { AbcClass } from "#/inventory/abc";
+import { type Priority, WAIT_DAYS } from "./priority";
 
 export type SuggestedLine = {
 	productId: number;
@@ -19,31 +19,31 @@ export type SuggestedLine = {
 	sold: number;
 	quantity: number;
 	unitCost: number | null;
-	// Marked critical, an A item, or leaving a tool set unsellable (see
-	// isCritical).
-	critical: boolean;
+	// What waiting a week would cost (./priority.ts); null when it can't be
+	// valued.
+	priority: Priority | null;
 };
 
 // Whether a supplier's suggested PO is worth sending. "ready": the total
-// reached the supplier's minimum order, or criticalThreshold of its products
-// are critical, which brings it up sooner. "soon": SOON_TIMES as many
-// critical products need it, so it shouldn't wait. "waiting": neither yet.
-export type Readiness = "soon" | "ready" | "waiting";
+// reached the supplier's minimum order. "short": it hasn't, but waiting
+// already loses profit, so it's shown anyway and someone decides. "waiting":
+// neither yet.
+export type Readiness = "ready" | "short" | "waiting";
 
-// How many times a supplier's criticalThreshold makes its PO "soon".
-export const SOON_TIMES = 2;
+// Less than this lost a week isn't worth acting on: it doesn't put a product
+// on a PO by itself or show a supplier under its minimum.
+export const MIN_AT_RISK = 10;
 
 export type SupplierSuggestion = {
 	supplierId: number;
 	supplierName: string;
 	minimumOrder: number;
-	criticalThreshold: number;
 	lines: SuggestedLine[];
 	// Lines without a price add nothing here.
 	total: number;
 	unpriced: number;
-	// How many lines are critical.
-	critical: number;
+	// Profit its lines lose if the PO waits a week, summed.
+	atRisk: number;
 	readiness: Readiness;
 	draftId: number | null;
 };
@@ -59,31 +59,19 @@ export function readyToOrder(suggestions: SupplierSuggestion[]) {
 export function readiness(s: {
 	total: number;
 	minimumOrder: number;
-	critical: number;
-	criticalThreshold: number;
+	atRisk: number;
 }): Readiness {
-	if (s.critical >= s.criticalThreshold * SOON_TIMES) return "soon";
-	if (s.critical >= s.criticalThreshold || s.total >= s.minimumOrder)
-		return "ready";
+	if (s.total >= s.minimumOrder) return "ready";
+	if (s.atRisk >= MIN_AT_RISK) return "short";
 	return "waiting";
 }
 
-// A product we can't run out of: marked critical by hand, one of the A items
-// that make most of the sales, or a part some tool set can't be built
-// without, since the set sells nothing until it arrives.
-export const isCritical = (
-	marked: boolean,
-	abc: AbcClass | null,
-	setsBlocked: number,
-) => marked || abc === "A" || setsBlocked > 0;
-
 // Whether a product that needs ordering goes on its supplier's PO by itself:
-// A and B items, which earn enough to always keep, anything marked critical,
-// and parts that leave a tool set unsellable, since the set's sales wait on
-// them. The rest (C items, and unpriced ones that can't be classed) are
-// recommended instead, so someone decides whether they're worth restocking.
-export const ordersItself = (
-	marked: boolean,
-	abc: AbcClass | null,
-	setsBlocked: number,
-) => marked || abc === "A" || abc === "B" || setsBlocked > 0;
+// a week sold out would lose at least MIN_AT_RISK of profit, its own or its
+// tool sets'. That's what it earns, not how soon it runs out, so a PO's
+// cover days still decide how far ahead it's bought. The rest (thin or
+// sporadic earners, and unpriced ones that can't be valued) are recommended
+// instead, so someone decides whether they're worth restocking.
+export const ordersItself = (priority: Priority | null) =>
+	priority !== null &&
+	(priority.own + priority.sets) * WAIT_DAYS >= MIN_AT_RISK;

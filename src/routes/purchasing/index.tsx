@@ -246,9 +246,12 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
 						Products
 					</th>
-					{/* Suggestions have no packages: the column only keeps the
-					    tables lined up. */}
-					<th className="hidden md:table-cell" />
+					{/* Where POs show packages: what waiting a week would lose. */}
+					<th className="hidden px-4 py-2 text-right font-medium md:table-cell">
+						<Tip content="Profit lost if this waits a week">
+							<span>At risk</span>
+						</Tip>
+					</th>
 					<th className="px-4 py-2 text-right font-medium">Total</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
 						Expected
@@ -283,7 +286,15 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 										<ProductCount s={s} />
 									</div>
 								</td>
-								<td className="hidden md:table-cell" />
+								<td className="hidden px-4 py-2.5 text-right tabular-nums md:table-cell">
+									{s.atRisk > 0 ? (
+										<span className="font-semibold text-critical-text">
+											{formatMoney(s.atRisk)}
+										</span>
+									) : (
+										<span className="text-muted-foreground">—</span>
+									)}
+								</td>
 								<td className="px-4 py-2.5 text-right tabular-nums">
 									{formatMoney(s.total)}
 								</td>

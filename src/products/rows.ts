@@ -112,6 +112,7 @@ export function sortValuesOf(
 		available: p.available,
 		onorder: p.onOrder,
 		velocity: p.dailyDemand * 30,
+		priority: p.why?.priority?.score ?? null,
 		// In units, so a case of 30 outranks 2 each.
 		reorder: p.reorder ? p.reorder.quantity * p.reorder.packSize : null,
 		// Unsold products last, since they aren't running out.

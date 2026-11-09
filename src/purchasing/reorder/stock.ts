@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
@@ -8,8 +8,6 @@ import {
 	purchaseOrderReceipts,
 	purchaseOrders,
 	stockLevels,
-	supplierOffers,
-	suppliers,
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
 import { carried } from "#/products/archive";
@@ -19,8 +17,8 @@ import {
 	type SetRecipeRow,
 	setMembership,
 } from "#/purchasing/sets";
-import { DEFAULT_LEAD_TIME_DAYS, loadPlan, planFor } from "./plan";
-import { type Arrival, timelyUnits } from "./quantity";
+import { DEFAULT_LEAD_TIME_DAYS } from "./plan";
+import type { Arrival } from "./quantity";
 
 // Every tool set's recipe, with what each set shows as a product. A kit's
 // parts are in the kit, not a set.
@@ -270,63 +268,4 @@ export async function stockAndArrivals(
 		}
 	}
 	return { onHand, onOrder, arrivals: datedArrivals(arrivals, lead) };
-}
-
-// A products that will run out before a PO sent today could arrive. Units on
-// order only count if they land before the shelf empties. Products without a
-// supplier use the default lead time, since they still have to come from
-// somewhere.
-export async function aItemsAtRisk(db: Db, now = new Date()) {
-	const plan = await loadPlan(db, now);
-	const { onHand, arrivals } = await stockAndArrivals(db, plan.leadTimes);
-	const aIds = [...plan.abc.classes]
-		.filter(([, c]) => c.abc === "A")
-		.map(([id]) => id);
-	if (aIds.length === 0) return [];
-	const rows = await db
-		.select({
-			id: products.id,
-			sku: products.sku,
-			name: products.name,
-			variantName: products.variantName,
-			imageUrl: products.imageUrl,
-			supplierId: suppliers.id,
-		})
-		.from(products)
-		.leftJoin(
-			supplierOffers,
-			and(
-				eq(supplierOffers.productId, products.id),
-				eq(supplierOffers.cheapest, true),
-			),
-		)
-		.leftJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
-		// Not counted sells without limit, so it can't run out.
-		.where(and(inArray(products.id, aIds), isNull(products.notCountedSince)));
-
-	return rows
-		.flatMap((p) => {
-			const { dailyDemand, leadTimeDays } = planFor(plan, p.id, p.supplierId);
-			if (dailyDemand === 0) return [];
-			const timely = timelyUnits(
-				now.getTime(),
-				onHand.get(p.id) ?? 0,
-				dailyDemand,
-				arrivals.get(p.id) ?? [],
-			);
-			const position = Math.max(onHand.get(p.id) ?? 0, 0) + timely;
-			if (position >= dailyDemand * leadTimeDays) return [];
-			return [
-				{
-					sku: p.sku,
-					name: p.name,
-					variantName: p.variantName,
-					imageUrl: p.imageUrl,
-					// Days until the shelf and the POs that land in time run out.
-					daysLeft: Math.max(0, Math.floor(position / dailyDemand)),
-					leadTimeDays,
-				},
-			];
-		})
-		.sort((a, b) => a.daysLeft - b.daysLeft);
 }
