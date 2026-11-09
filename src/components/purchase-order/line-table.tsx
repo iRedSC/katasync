@@ -9,12 +9,7 @@ import { cn } from "#/lib/utils";
 import { NUMBER, type Sort, sortRows, TEXT } from "#/products/sort";
 import { lineCents } from "#/purchasing/discount";
 import { lineNumbers } from "#/purchasing/line-numbers";
-import {
-	orderedItems,
-	partState,
-	setCoverage,
-	setsOf,
-} from "#/purchasing/sets";
+import { partState, setCoverage, setsOf } from "#/purchasing/sets";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { DRAFT_MIN_WIDTH, DraftColumns } from "./columns";
 import { LineMenu } from "./line-menu";
@@ -32,7 +27,8 @@ const LINE_COLUMNS = {
 	minimum: { label: "MOQ / UOM", ...NUMBER },
 	requested: { label: "Qty requested", ...NUMBER },
 	qty: { label: "Qty", ...NUMBER },
-	onhand: { label: "On hand", ...NUMBER },
+	onhand: { label: "Stock", ...NUMBER },
+	sales: { label: "Sales (30 days)", ...NUMBER },
 	priority: { label: "Priority", ...NUMBER },
 	cost: { label: "Cost", ...NUMBER },
 	amount: { label: "Amount", ...NUMBER },
@@ -47,6 +43,7 @@ const lineValues = (ranks: Record<number, number>) => (l: Line) => ({
 	requested: l.sentQuantity,
 	qty: l.quantity,
 	onhand: l.onHand,
+	sales: l.why?.sales.d30 ?? null,
 	priority: ranks[l.productId] ?? null,
 	cost: l.unitCost,
 	amount: lineCents(l, l.discounts),
@@ -117,8 +114,6 @@ export function LineTable({
 	const quantities = new Map(
 		preview ? [[preview.lineId, preview.quantity]] : [],
 	);
-	// What the draft orders of each product once sent, sets' parts included.
-	const items = orderedItems(d.lines, d.setParts, d.supplier.id, quantities);
 	// Each line only sets or clears its own preview.
 	const previewFor = (lineId: number) => (quantity: number | null) =>
 		setPreview((prev) =>
@@ -220,7 +215,14 @@ export function LineTable({
 								{header("qty", "Qty expected", "text-right")}
 							</>
 						)}
-						{draft && header("onhand", "On hand → After PO", "text-center")}
+						{draft && header("onhand", "Stock", "text-right")}
+						{draft &&
+							header(
+								"sales",
+								"Sales",
+								"text-right",
+								"Units sold in 30 days. Hover one for a week to a year",
+							)}
 						{draft &&
 							header(
 								"priority",
@@ -249,7 +251,6 @@ export function LineTable({
 											set={set}
 											focus={focus}
 											focusedRow={focusedRow}
-											items={items}
 											previewing={preview !== null}
 											previewFor={previewFor}
 											toggle={toggle}
@@ -283,7 +284,6 @@ export function LineTable({
 													part={part}
 													state={state}
 													sets={set.sets}
-													ordered={items.get(part.productId) ?? 0}
 													rank={d.priority.ranks[part.productId] ?? null}
 												/>
 											))}

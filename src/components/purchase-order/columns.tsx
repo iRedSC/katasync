@@ -7,13 +7,14 @@
 const SKU = "w-40";
 const MINIMUM = "w-24";
 const QTY = "w-32";
-const ON_HAND = "w-36";
+const STOCK = "w-24";
+const SALES = "w-24";
 const PRIORITY = "w-20";
 const COST = "w-32";
 const AMOUNT = "w-28";
 
 // Product keeps room for its min-w-72 cell, a set part's indent included.
-export const DRAFT_MIN_WIDTH = "min-w-[75rem]";
+export const DRAFT_MIN_WIDTH = "min-w-[78rem]";
 
 export function DraftColumns() {
 	return (
@@ -22,7 +23,8 @@ export function DraftColumns() {
 			<col className={SKU} />
 			<col className={MINIMUM} />
 			<col className={QTY} />
-			<col className={ON_HAND} />
+			<col className={STOCK} />
+			<col className={SALES} />
 			<col className={PRIORITY} />
 			<col className={COST} />
 			<col className={AMOUNT} />

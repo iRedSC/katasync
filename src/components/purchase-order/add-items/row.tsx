@@ -1,6 +1,5 @@
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, Loader2 } from "lucide-react";
-import { Fragment } from "react";
 import { BulkChip } from "#/components/bulk-chip";
 import { OnPoChip } from "#/components/on-po-chip";
 import { Badge } from "#/components/page";
@@ -9,7 +8,7 @@ import { ProductImage, SetsChip } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney } from "#/lib/format";
-import type { Sales } from "#/purchasing/reorder/profit";
+import { SalesCell, StockCell } from "../stock-sales";
 import type { Recommendation } from "../types";
 import type { Candidate } from "./candidates";
 
@@ -83,16 +82,7 @@ export function Row({
 				{c.kind === "bundle" ? (
 					<span className="text-muted-foreground">—</span>
 				) : (
-					<>
-						{formatCount(c.onHand)}
-						{(c.why?.onOrder ?? 0) > 0 && (
-							<Tip content="On sent POs, not here yet">
-								<span className="ml-1 text-xs text-muted-foreground">
-									+{formatCount(c.why?.onOrder ?? 0)}
-								</span>
-							</Tip>
-						)}
-					</>
+					<StockCell onHand={c.onHand} onOrder={c.why?.onOrder ?? 0} />
 				)}
 			</td>
 			<td className="px-3 py-2 text-right tabular-nums">
@@ -156,36 +146,6 @@ function CheaperAt({ at }: { at: NonNullable<Recommendation["cheaperAt"]> }) {
 						? `Priced at ${at.supplierCode}`
 						: `${formatMoney(saved)} less at ${at.supplierCode}`}
 				</Badge>
-			</span>
-		</Tip>
-	);
-}
-
-// Units sold over 30 days; hovering shows a week to a year.
-function SalesCell({ sales }: { sales: Sales | null }) {
-	if (!sales) return <span className="text-muted-foreground">—</span>;
-	const rows: [string, number][] = [
-		["7 days", sales.d7],
-		["30 days", sales.d30],
-		["3 months", sales.d90],
-		["6 months", sales.d180],
-		["1 year", sales.d365],
-	];
-	return (
-		<Tip
-			content={
-				<dl className="grid grid-cols-[auto_auto] gap-x-4 tabular-nums">
-					{rows.map(([label, n]) => (
-						<Fragment key={label}>
-							<dt>{label}</dt>
-							<dd className="text-right">{formatCount(n)}</dd>
-						</Fragment>
-					))}
-				</dl>
-			}
-		>
-			<span className={sales.d30 === 0 ? "text-muted-foreground" : undefined}>
-				{formatCount(sales.d30)}
 			</span>
 		</Tip>
 	);

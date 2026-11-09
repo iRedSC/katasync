@@ -4,7 +4,6 @@ import type { Db } from "#/db/client";
 import { payoutChecks, payouts } from "#/db/schema";
 import { channelName, formatMoney } from "#/lib/format";
 import { US_STATES } from "#/lib/places";
-import { readStatements } from "#/reports/statements/refresh";
 import { TIME_ZONE } from "./profit";
 
 // Sales and sales tax for the accountant, one calendar month at a time.
@@ -388,8 +387,13 @@ export async function readSalesReport(db: Db, period: Period) {
 			.select({ channel: payoutChecks.channel, error: payoutChecks.error })
 			.from(payoutChecks)
 			.where(isNotNull(payoutChecks.error)),
-		// Each marketplace's own figures for the month, as last read.
-		readStatements(db, period),
+		// Each marketplace's own figures for the month, as last read. Loaded
+		// here, not at the top: the report page imports this file's helpers,
+		// and the statement readers pull in server-only code (node:crypto)
+		// that breaks the page in dev.
+		import("#/reports/statements/refresh").then((m) =>
+			m.readStatements(db, period),
+		),
 	]);
 
 	const { name, homeState } = business.rows[0] ?? {
