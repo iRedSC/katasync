@@ -1,33 +1,32 @@
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, Loader2 } from "lucide-react";
+import { Fragment } from "react";
 import { BulkChip } from "#/components/bulk-chip";
 import { OnPoChip } from "#/components/on-po-chip";
 import { Badge } from "#/components/page";
-import { PriorityScore } from "#/components/priority-score";
+import { PriorityRank } from "#/components/priority-score";
 import { ProductImage, SetsChip } from "#/components/product";
-import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
-import { VelocityGauge } from "#/components/velocity-gauge";
 import { formatCount, formatMoney } from "#/lib/format";
-import { AfterPo } from "../after-po";
+import type { Sales } from "#/purchasing/reorder/profit";
 import type { Recommendation } from "../types";
 import type { Candidate } from "./candidates";
 
 export function Row({
 	c,
+	rank,
 	lineId,
-	ordered,
 	adding,
 	disabled,
 	onAdd,
 	onGoToLine,
 }: {
 	c: Candidate;
+	// Its place among the supplier's products, P1 first.
+	rank: number | null;
 	// Its line on this PO, once it's there.
 	lineId: number | undefined;
-	// What this PO orders of it with this row added, in single items.
-	ordered: number;
 	adding: boolean;
 	disabled: boolean;
 	onAdd: () => void;
@@ -55,6 +54,9 @@ export function Row({
 						</Link>
 						<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
 							{c.sku}
+							{c.supplierSku && c.supplierSku !== c.sku && (
+								<span>Theirs {c.supplierSku}</span>
+							)}
 							<OnPoChip pos={c.otherPos} />
 							<SetsChip sets={c.why?.sets ?? null} />
 							{c.bulk && (
@@ -77,58 +79,27 @@ export function Row({
 					</div>
 				</div>
 			</td>
-			<td className="px-3 py-2">
-				<span className="px-1.5 text-muted-foreground">
-					{c.supplierSku ?? "—"}
-				</span>
-			</td>
-			<td className="px-3 py-2">
-				{c.terms ? (
-					<PurchaseUnitCell label={c.sku} value={c.terms} cost={c.unitCost} />
-				) : (
+			<td className="px-3 py-2 text-right tabular-nums">
+				{c.kind === "bundle" ? (
 					<span className="text-muted-foreground">—</span>
-				)}
-			</td>
-			<td className="px-3 py-2 text-muted-foreground">
-				{c.due === null ? (
-					""
-				) : c.due === "now" ? (
-					<Badge tone="warning">Due</Badge>
-				) : c.due === 0 ? (
-					"Today"
 				) : (
-					`${formatCount(c.due)}d`
-				)}
-			</td>
-			<td className="px-3 py-2 text-right font-semibold tabular-nums">
-				{formatCount(c.quantity)}
-			</td>
-			<td className="px-3 py-2">
-				{c.kind === "bundle" ? (
-					<span className="block text-center text-muted-foreground">—</span>
-				) : (
-					<AfterPo onHand={c.onHand} range={c.range} ordered={ordered} />
-				)}
-			</td>
-			<td className="px-3 py-2">
-				{c.why || c.kind === "bundle" ? (
-					<VelocityGauge why={c.why} />
-				) : (
-					<span className="block text-center text-muted-foreground">—</span>
-				)}
-			</td>
-			<td className="px-3 py-2">
-				<PriorityScore priority={c.why?.priority ?? null} />
-			</td>
-			<td className="px-3 py-2 text-right tabular-nums">
-				{c.kind === "bundle" ? (
-					<span className="text-muted-foreground">As parts</span>
-				) : (
-					formatMoney(c.unitCost)
+					<>
+						{formatCount(c.onHand)}
+						{(c.why?.onOrder ?? 0) > 0 && (
+							<Tip content="On sent POs, not here yet">
+								<span className="ml-1 text-xs text-muted-foreground">
+									+{formatCount(c.why?.onOrder ?? 0)}
+								</span>
+							</Tip>
+						)}
+					</>
 				)}
 			</td>
 			<td className="px-3 py-2 text-right tabular-nums">
-				{c.unitCost === null ? "—" : formatMoney(c.unitCost * c.quantity)}
+				<SalesCell sales={c.why?.sales ?? null} />
+			</td>
+			<td className="px-3 py-2">
+				<PriorityRank priority={c.why?.priority ?? null} rank={rank} />
 			</td>
 			<td className="px-4 py-2 text-right">
 				{lineId !== undefined ? (
@@ -143,17 +114,28 @@ export function Row({
 						</Button>
 					</Tip>
 				) : (
-					<Tip content={c.warning?.blocks ? c.warning.text : undefined}>
-						<Button
-							size="sm"
-							variant="outline"
-							disabled={disabled || c.warning?.blocks}
-							onClick={onAdd}
-						>
-							{adding && <Loader2 className="animate-spin" />}
-							Add
-						</Button>
-					</Tip>
+					<div className="flex items-center justify-end gap-2">
+						{/* What Add puts on: reorder's suggestion, filled to max. */}
+						<span className="text-muted-foreground tabular-nums">
+							{formatCount(c.quantity)}
+							{c.terms && c.terms.unit !== "EACH" && (
+								<span className="ml-1 text-xs">
+									{c.terms.unit.toLowerCase()}
+								</span>
+							)}
+						</span>
+						<Tip content={c.warning?.blocks ? c.warning.text : undefined}>
+							<Button
+								size="sm"
+								variant="outline"
+								disabled={disabled || c.warning?.blocks}
+								onClick={onAdd}
+							>
+								{adding && <Loader2 className="animate-spin" />}
+								Add
+							</Button>
+						</Tip>
+					</div>
 				)}
 			</td>
 		</tr>
@@ -174,6 +156,36 @@ function CheaperAt({ at }: { at: NonNullable<Recommendation["cheaperAt"]> }) {
 						? `Priced at ${at.supplierCode}`
 						: `${formatMoney(saved)} less at ${at.supplierCode}`}
 				</Badge>
+			</span>
+		</Tip>
+	);
+}
+
+// Units sold over 30 days; hovering shows a week to a year.
+function SalesCell({ sales }: { sales: Sales | null }) {
+	if (!sales) return <span className="text-muted-foreground">—</span>;
+	const rows: [string, number][] = [
+		["7 days", sales.d7],
+		["30 days", sales.d30],
+		["3 months", sales.d90],
+		["6 months", sales.d180],
+		["1 year", sales.d365],
+	];
+	return (
+		<Tip
+			content={
+				<dl className="grid grid-cols-[auto_auto] gap-x-4 tabular-nums">
+					{rows.map(([label, n]) => (
+						<Fragment key={label}>
+							<dt>{label}</dt>
+							<dd className="text-right">{formatCount(n)}</dd>
+						</Fragment>
+					))}
+				</dl>
+			}
+		>
+			<span className={sales.d30 === 0 ? "text-muted-foreground" : undefined}>
+				{formatCount(sales.d30)}
 			</span>
 		</Tip>
 	);

@@ -1,9 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
+	comparePriority,
+	coverOf,
 	dailyProfitOf,
 	daysOut,
+	earnings,
 	type PriorityInput,
 	priorityOf,
+	priorityRanks,
 	setDailyOf,
 	steadinessOf,
 	WAIT_DAYS,
@@ -22,7 +26,19 @@ const base: PriorityInput = {
 	dailyDemand: 1,
 	incoming: [],
 	leadTimeDays: 14,
+	needsOrder: true,
+	soldYear: 50,
+	unitCost: 50,
 };
+const unproven = (onHand: number, unitCost = 50): PriorityInput => ({
+	...base,
+	orders: [],
+	soldYear: 0,
+	dailyDemand: 0,
+	onHand,
+	unitCost,
+	needsOrder: false,
+});
 
 describe("dailyProfitOf", () => {
 	test("counts orders, not units, at the typical order's profit", () => {
@@ -50,6 +66,23 @@ describe("steadinessOf", () => {
 	});
 });
 
+describe("earnings", () => {
+	test("a slow seller with too few orders in 90 days reads the whole year", () => {
+		// Two sales, both before the 90 day window.
+		const e = earnings({
+			orders: [
+				{ day: -200, profit: 365 },
+				{ day: -100, profit: 365 },
+			],
+			open: open90,
+			sets: [],
+		});
+		// 2 orders a year at $365: $2 a day before steadiness.
+		expect(e.own).toBeGreaterThan(1);
+		expect(e.own).toBeLessThan(2);
+	});
+});
+
 describe("setDailyOf", () => {
 	test("takes half of each proven set, capped at its best set whole", () => {
 		const sets = [
@@ -64,71 +97,109 @@ describe("setDailyOf", () => {
 	});
 });
 
-describe("daysOut", () => {
-	test("counts only the days inside the window", () => {
+describe("daysOut and coverOf", () => {
+	test("count only the days inside the window", () => {
 		// Empty from day 5; window 14 to 21.
 		expect(daysOut(5, 1, [], 14, 21)).toBe(7);
-		// Lasts to day 17.
 		expect(daysOut(17, 1, [], 14, 21)).toBe(4);
 		expect(daysOut(30, 1, [], 14, 21)).toBe(0);
+		expect(coverOf(17, 1, [], 14)).toBe(17);
+		expect(coverOf(5, 0, [], 14)).toBeNull();
 	});
 
-	test("a PO landing inside the window refills the shelf", () => {
+	test("a PO landing in time refills the shelf", () => {
 		expect(daysOut(0, 1, [{ units: 100, inDays: 16 }], 14, 21)).toBe(2);
+		expect(coverOf(2, 1, [{ units: 10, inDays: 1 }], 14)).toBe(12);
 	});
 
 	test("back-ordered units land when a new order would, so they don't make a duplicate urgent", () => {
 		expect(daysOut(0, 1, [{ units: 100, inDays: null }], 14, 21)).toBe(0);
-		// Promised for a date already past: the same.
 		expect(daysOut(0, 1, [{ units: 100, inDays: -3 }], 14, 21)).toBe(0);
+		// Before then, nothing has come.
+		expect(daysOut(0, 1, [{ units: 100, inDays: null }], 0, 14, 14)).toBe(14);
 	});
 });
 
-describe("priorityOf", () => {
-	test("the best earner sold out for the whole week scores 100", () => {
-		const p = priorityOf(base, 10);
-		expect(p.daysOut).toBe(WAIT_DAYS);
-		expect(p.own).toBeCloseTo(10.11);
-		expect(p.score).toBe(100);
+describe("priorityOf tones", () => {
+	test("red when it runs out before a PO sent today lands", () => {
+		expect(priorityOf({ ...base, onHand: 5 }).tone).toBe("red");
 	});
 
-	test("zero stock isn't urgent when a PO lands before the week", () => {
-		const p = priorityOf({ ...base, incoming: [{ units: 50, inDays: 3 }] }, 10);
-		expect(p).toMatchObject({ score: 0, atRisk: 0 });
+	test("orange when it lasts until the PO lands but not the week after", () => {
+		const p = priorityOf({ ...base, onHand: 17 });
+		expect(p).toMatchObject({ tone: "orange", daysOut: 4 });
+		expect(p.atRisk).toBeCloseTo(4 * p.own);
 	});
 
-	test("a high-volume consumable with thin margins ranks below a profitable tool", () => {
-		// 10 orders a week at $1 each, against one a week at $70.
-		const sponge = priorityOf(
-			{
-				...base,
-				orders: Array.from({ length: 130 }, (_, i) => ({
-					day: i % 90,
-					profit: 1,
-				})),
-				dailyDemand: 50,
-			},
-			10,
+	test("yellow when reorder wants some but nothing is lost, green when covered", () => {
+		expect(priorityOf({ ...base, onHand: 40 }).tone).toBe("yellow");
+		expect(priorityOf({ ...base, onHand: 40, needsOrder: false }).tone).toBe(
+			"green",
 		);
-		const tool = priorityOf(base, 10);
-		expect(sponge.score).toBeLessThan(tool.score);
-		expect(sponge.atRisk).toBeLessThan(tool.atRisk);
 	});
 
-	test("a one-off bulk buyer counts less than a steady seller of the same profit", () => {
-		const bulk = priorityOf(
-			{ ...base, orders: [{ day: 3, profit: 13 * 70 }] },
-			10,
-		);
-		expect(bulk.atRisk).toBeLessThan(priorityOf(base, 10).atRisk * 0.6);
-		expect(bulk.steadiness).toBeCloseTo(1 / 13);
+	test("zero stock is red even unproven; unproven with stock is yellow", () => {
+		expect(priorityOf(unproven(0)).tone).toBe("red");
+		expect(priorityOf(unproven(3)).tone).toBe("yellow");
 	});
 
-	test("a part that sells only in a proven set earns from the set", () => {
-		const p = priorityOf(
-			{ ...base, orders: [], sets: [{ setId: 9, orders: 10, daily: 20 }] },
-			10,
+	test("zero stock is red even with a PO landing in time", () => {
+		const p = priorityOf({
+			...base,
+			incoming: [{ units: 50, inDays: 3 }],
+		});
+		expect(p).toMatchObject({ tone: "red", atRisk: 0 });
+	});
+});
+
+describe("comparePriority", () => {
+	const rank = (list: PriorityInput[]) => {
+		const ranks = priorityRanks(
+			list.map((p, id) => ({ id, p: priorityOf(p) })),
+			(x) => x.id,
+			(x) => x.p,
 		);
-		expect(p).toMatchObject({ own: 0, sets: 10, score: 100 });
+		return list.map((_, id) => ranks.get(id));
+	};
+
+	test("spreads covered sellers instead of tying them: a little stock outranks a lot", () => {
+		// Both sell one a month and are covered past the week.
+		const slow = {
+			...base,
+			orders: [{ day: 10, profit: 20 }],
+			dailyDemand: 1 / 30,
+		};
+		expect(
+			rank([
+				{ ...slow, onHand: 500 },
+				{ ...slow, onHand: 2 },
+			]),
+		).toEqual([2, 1]);
+	});
+
+	test("a seller losing profit comes before any unproven product", () => {
+		expect(rank([unproven(0, 999), { ...base, onHand: 5 }])).toEqual([2, 1]);
+	});
+
+	test("unproven at zero, then unproven with stock, then covered sellers", () => {
+		const covered = { ...base, onHand: 500, needsOrder: false };
+		expect(rank([covered, unproven(4), unproven(0)])).toEqual([3, 2, 1]);
+	});
+
+	test("unproven ones with less stock come first, falling off fast", () => {
+		expect(rank([unproven(4), unproven(1), unproven(2)])).toEqual([3, 1, 2]);
+	});
+
+	test("the more a seller loses, the sooner", () => {
+		const big = { ...base, orders: weekly(200), onHand: 5 };
+		expect(rank([{ ...base, onHand: 5 }, big])).toEqual([2, 1]);
+	});
+
+	test("not counted goes last", () => {
+		expect(comparePriority(null, priorityOf(base))).toBeGreaterThan(0);
+	});
+
+	test("the week waited is WAIT_DAYS", () => {
+		expect(priorityOf(base).daysOut).toBe(WAIT_DAYS);
 	});
 });

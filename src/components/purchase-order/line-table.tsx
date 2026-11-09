@@ -16,6 +16,7 @@ import {
 	setsOf,
 } from "#/purchasing/sets";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
+import { DRAFT_MIN_WIDTH, DraftColumns } from "./columns";
 import { LineMenu } from "./line-menu";
 import { NoteDialog, NoteRow, notable } from "./line-note";
 import { LineRow } from "./line-row";
@@ -32,7 +33,6 @@ const LINE_COLUMNS = {
 	requested: { label: "Qty requested", ...NUMBER },
 	qty: { label: "Qty", ...NUMBER },
 	onhand: { label: "On hand", ...NUMBER },
-	velocity: { label: "Velocity", ...NUMBER },
 	priority: { label: "Priority", ...NUMBER },
 	cost: { label: "Cost", ...NUMBER },
 	amount: { label: "Amount", ...NUMBER },
@@ -40,15 +40,14 @@ const LINE_COLUMNS = {
 } as const;
 export type LineSort = Sort<keyof typeof LINE_COLUMNS>;
 
-const lineValues = (l: Line) => ({
+const lineValues = (ranks: Record<number, number>) => (l: Line) => ({
 	name: l.name,
 	theirsku: l.supplierSku,
 	minimum: l.minimumQuantity,
 	requested: l.sentQuantity,
 	qty: l.quantity,
 	onhand: l.onHand,
-	velocity: l.why?.dailyDemand ?? null,
-	priority: l.why?.priority?.score ?? null,
+	priority: ranks[l.productId] ?? null,
 	cost: l.unitCost,
 	amount: lineCents(l, l.discounts),
 	received: l.received,
@@ -80,8 +79,11 @@ export function LineTable({
 }) {
 	const draft = isUnsent(d.order.status);
 	const lines = useMemo(
-		() => (sort.length === 0 ? unsorted : sortRows(unsorted, sort, lineValues)),
-		[unsorted, sort],
+		() =>
+			sort.length === 0
+				? unsorted
+				: sortRows(unsorted, sort, lineValues(d.priority.ranks)),
+		[unsorted, sort, d.priority.ranks],
 	);
 	// Set parts and damages by line, grouped once per data version rather than
 	// filtered again for every row.
@@ -177,15 +179,18 @@ export function LineTable({
 	return (
 		// Scrolls sideways rather than squeeze a column when there's no room.
 		<div className="overflow-x-auto">
-			{/* After sending, lines split across the Incoming and Received cards;
-			    fixed widths keep their columns lined up. */}
+			{/* Fixed widths: adding or removing a line never reflows the columns.
+			    After sending, lines split across the Incoming and Received cards,
+			    which these keep lined up. A draft's match Add more items below. */}
 			<table
 				className={cn(
-					"w-full [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap",
-					!draft && "min-w-[60rem] table-fixed",
+					"w-full table-fixed [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap",
+					draft ? DRAFT_MIN_WIDTH : "min-w-[60rem]",
 				)}
 			>
-				{!draft && (
+				{draft ? (
+					<DraftColumns />
+				) : (
 					<colgroup>
 						<col />
 						<col className="w-24" />
@@ -216,13 +221,6 @@ export function LineTable({
 							</>
 						)}
 						{draft && header("onhand", "On hand → After PO", "text-center")}
-						{draft &&
-							header(
-								"velocity",
-								"Velocity",
-								"text-center",
-								"Units sold a month",
-							)}
 						{draft &&
 							header(
 								"priority",
@@ -286,6 +284,7 @@ export function LineTable({
 													state={state}
 													sets={set.sets}
 													ordered={items.get(part.productId) ?? 0}
+													rank={d.priority.ranks[part.productId] ?? null}
 												/>
 											))}
 									</Fragment>

@@ -8,7 +8,7 @@ import { COUNT_REASONS, countsDue } from "#/inventory/count-priority";
 import { describeSchema, MAX_ROWS, readOnlyQuery } from "#/mcp/query";
 import { listCatalogs } from "#/purchasing/catalogs";
 import { type InvoiceLine, matchInvoice } from "#/purchasing/invoices";
-import { suggestPurchases } from "#/purchasing/reorder";
+import { comparePriority, suggestPurchases } from "#/purchasing/reorder";
 import { supplierByRef } from "#/purchasing/suppliers";
 import { listUnits } from "#/purchasing/units";
 import { untrusted } from "./email-files";
@@ -138,7 +138,7 @@ export function registerReadTools(server: McpServer, db: Db) {
 		"reorder_suggestions",
 		{
 			description:
-				"What each supplier should be sent today: per product, units sold in the last 90 days, on hand, on order, and the quantity to order in the supplier's unit. Each product is topped up to what it sold over the supplier's cover days, less on hand and open POs, with min stock, minimums, and tool sets a part leaves unsellable as floors. Lines come most urgent first by priority: score 0 to 100 (log scale; 100 is the best earner sold out a whole week), atRisk the profit in USD lost if it waits 7 days (daysOut of those 7 sold out, times own plus sets profit a day; steadiness is the share of weeks it sold). critical is score 60 or more. Null priority: no cost, or not counted.",
+				"What each supplier should be sent today: per product, units sold in the last 90 days, on hand, on order, and the quantity to order in the supplier's unit. Each product is topped up to what it sold over the supplier's cover days, less on hand and open POs, with min stock, minimums, and tool sets a part leaves unsellable as floors. Lines come in buying order, most urgent first. priority.tone says whether it needs buying: red loses profit before a PO sent today lands or sits at zero, orange runs out the week after, yellow is below target or unproven (no sales in a year), green is covered. atRisk is the profit in USD lost if it waits 7 days (daysOut of those 7 sold out, times own plus sets profit a day; steadiness is the share of weeks it sold); coverDays is how long stock lasts. Null priority: not counted.",
 			inputSchema: {
 				supplier: z.string().optional().describe("Code or name"),
 			},
@@ -147,8 +147,8 @@ export function registerReadTools(server: McpServer, db: Db) {
 		async ({ supplier }) => {
 			const all = (await suggestPurchases(db)).map((s) => ({
 				...s,
-				lines: [...s.lines].sort(
-					(a, b) => (b.priority?.atRisk ?? -1) - (a.priority?.atRisk ?? -1),
+				lines: [...s.lines].sort((a, b) =>
+					comparePriority(a.priority, b.priority),
 				),
 			}));
 			if (!supplier) return json(all);

@@ -33,6 +33,7 @@ export const COLUMNS = {
 	minimum: { label: "Minimum order", ...NUMBER },
 	due: { label: "Due", asc: "soonest first", desc: "latest first" },
 	qty: { label: "Qty", ...NUMBER },
+	sales: { label: "Sales (30 days)", ...NUMBER },
 	cost: { label: "Cost", ...NUMBER },
 	amount: { label: "Amount", ...NUMBER },
 } as const satisfies SortColumns<string>;
@@ -99,7 +100,7 @@ function valuesOf(
 		qty: c.quantity,
 		onhand: c.onHand,
 		velocity: c.why?.dailyDemand ?? null,
-		priority: c.why?.priority?.score ?? null,
+		sales: c.why?.sales.d30 ?? null,
 		cost: c.unitCost,
 		amount: c.unitCost === null ? null : c.unitCost * c.quantity,
 	};

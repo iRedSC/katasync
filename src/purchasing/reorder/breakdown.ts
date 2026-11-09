@@ -21,8 +21,8 @@ import {
 } from "#/purchasing/forecast";
 import { setFloorOf, setMembership } from "#/purchasing/sets";
 import { DEFAULT_COVER_DAYS, loadPlan, type Plan, planFor } from "./plan";
-import { earnings, incomingOf, type Priority, priorityOf } from "./priority";
-import { loadProfits } from "./profit";
+import { incomingOf, type Priority, priorityOf, YEAR_DAYS } from "./priority";
+import { loadProfits, loadSales, NO_SALES } from "./profit";
 import {
 	explainReorder,
 	forecastMax,
@@ -161,7 +161,10 @@ export async function reorderBreakdown(
 	const { onHand, onOrder, arrivals } = supply;
 	const ranks = velocityRanks(planned.forecasts);
 	const sets = setMembership(recipes, onHand, setsSold);
-	const profits = await loadProfits(db, demand, recipes);
+	const [profits, salesOf] = await Promise.all([
+		loadProfits(db, demand, recipes),
+		loadSales(db, demand),
+	]);
 	const openOf = (id: number) =>
 		(planned.forecasts.get(id) ?? NO_FORECAST).days.map(
 			(d) => d.inStock || d.units > 0,
@@ -171,12 +174,6 @@ export async function reorderBreakdown(
 		open: openOf(id),
 		sets: profits.setsOf.get(id) ?? [],
 	});
-	// What a day of the best earner makes, which a score of 100 is a week of.
-	let best = 0;
-	for (const id of profits.priced) {
-		const e = earnings(inputsOf(id));
-		best = Math.max(best, e.own + e.sets);
-	}
 
 	return rows.map((p) => {
 		const rank = planned.abc.classes.get(p.productId);
@@ -231,28 +228,34 @@ export async function reorderBreakdown(
 			minimumQuantity: terms.minimumQuantity,
 			packSize: terms.packSize,
 		};
-		// Not counted sells without limit, and without a cost it can't be
-		// valued: neither has a priority.
+		const sales = salesOf.get(p.productId) ?? NO_SALES;
+		// Not counted sells without limit, and a tool set is bought as its
+		// parts: neither has a priority.
 		const priority: Priority | null =
-			p.notCounted || !profits.priced.has(p.productId)
+			p.notCounted || p.kind === "bundle"
 				? null
-				: priorityOf(
-						{
-							...inputsOf(p.productId),
-							onHand: stock.onHand,
-							dailyDemand: forecast.dailyDemand,
-							incoming: incomingOf(
-								arrivals.get(p.productId) ?? [],
-								now.getTime(),
-							),
-							leadTimeDays: planFor(
-								planned,
-								p.productId,
-								supplier?.supplierId ?? null,
-							).leadTimeDays,
-						},
-						best,
-					);
+				: priorityOf({
+						...inputsOf(p.productId),
+						soldYear: sales.d365,
+						// A slow seller with nothing in 90 days still runs out
+						// at the year's pace.
+						dailyDemand:
+							forecast.dailyDemand > 0
+								? forecast.dailyDemand
+								: sales.d365 / YEAR_DAYS,
+						onHand: stock.onHand,
+						incoming: incomingOf(
+							arrivals.get(p.productId) ?? [],
+							now.getTime(),
+						),
+						leadTimeDays: planFor(
+							planned,
+							p.productId,
+							supplier?.supplierId ?? null,
+						).leadTimeDays,
+						needsOrder: reorderQuantity(input) > 0,
+						unitCost: profits.costOf.get(p.productId) ?? null,
+					});
 		const line: SuggestedLine = {
 			productId: p.productId,
 			sku: p.sku,
@@ -278,6 +281,7 @@ export async function reorderBreakdown(
 				sets: membership,
 			}),
 			priority,
+			sales,
 		};
 		// Only with `from`: the cheapest is someone else, at a known lower
 		// price. An unpriced offer loses to any priced one.

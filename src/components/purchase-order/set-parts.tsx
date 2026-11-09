@@ -1,12 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle } from "lucide-react";
 import { Fragment } from "react";
-import { PriorityScore } from "#/components/priority-score";
+import { PriorityRank } from "#/components/priority-score";
 import { ProductImage } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
-import { VelocityGauge } from "#/components/velocity-gauge";
 import { formatCount, formatMoney } from "#/lib/format";
 import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
@@ -25,12 +24,15 @@ export function SetPartRow({
 	state,
 	sets,
 	ordered,
+	rank,
 }: {
 	line: Line;
 	part: SetPart;
 	state: PartState;
 	sets: number;
 	ordered: number;
+	// Its place among the supplier's products, P1 first.
+	rank: number | null;
 }) {
 	const { busy, run } = useAction();
 	const here = state.kind === "here";
@@ -132,14 +134,10 @@ export function SetPartRow({
 				)}
 			</td>
 			<td className="px-3 py-2">
-				{here ? (
-					<VelocityGauge why={p.why} />
-				) : (
-					<span className="block text-center text-muted-foreground">—</span>
-				)}
-			</td>
-			<td className="px-3 py-2">
-				<PriorityScore priority={here ? (p.why?.priority ?? null) : null} />
+				<PriorityRank
+					priority={here ? (p.why?.priority ?? null) : null}
+					rank={rank}
+				/>
 			</td>
 			<td className="px-3 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
 				{here && p.unitCost !== null ? formatMoney(p.unitCost) : "—"}

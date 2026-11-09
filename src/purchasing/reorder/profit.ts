@@ -1,15 +1,21 @@
 import { and, eq, gte, isNull, lt, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orderLines, orders, products, supplierOffers } from "#/db/schema";
+import { soldByDay } from "#/inventory/sales";
 import type { DemandWindow } from "#/purchasing/forecast";
 import type { SetRecipeRow } from "#/purchasing/sets";
-import { earnings, type OrderTake, type SetProfit } from "./priority";
+import {
+	earnings,
+	type OrderTake,
+	type SetProfit,
+	YEAR_DAYS,
+} from "./priority";
 
 const DAY_MS = 86_400_000;
 
-// What priority reads about profit over the demand window: each stocked
+// What priority reads about profit over the last year: each stocked
 // product's own orders and each tool set's, each order's profit at today's
-// cost. A set's sale is the set's, never its parts' too, so no dollar is
+// cost, dated from the demand window's first day (older ones negative). A set's sale is the set's, never its parts' too, so no dollar is
 // counted twice. Cancelled and FBA orders are left out: an FBA sale never
 // waited on our shelf.
 export type Profits = {
@@ -17,6 +23,8 @@ export type Profits = {
 	// no priority rather than a low one.
 	own: Map<number, OrderTake[]>;
 	priced: Set<number>;
+	// A unit's cost, for ranking what hasn't sold.
+	costOf: Map<number, number | null>;
 	// Each set's day of profit, for its parts.
 	setsOf: Map<number, SetProfit[]>;
 };
@@ -26,6 +34,7 @@ export async function loadProfits(
 	window: DemandWindow,
 	recipes: SetRecipeRow[],
 ): Promise<Profits> {
+	const yearStart = new Date(window.end.getTime() - YEAR_DAYS * DAY_MS);
 	const [lines, costs] = await Promise.all([
 		db
 			.select({
@@ -41,7 +50,7 @@ export async function loadProfits(
 			.innerJoin(products, eq(products.id, orderLines.productId))
 			.where(
 				and(
-					gte(orders.placedAt, window.start),
+					gte(orders.placedAt, yearStart),
 					lt(orders.placedAt, window.end),
 					isNull(orders.cancelledAt),
 					eq(orders.fulfilledByChannel, false),
@@ -98,6 +107,7 @@ export async function loadProfits(
 		takes.set(l.productId, byOrder);
 	}
 
+	// Sets are never out of stock themselves.
 	const days = Math.round(
 		(window.end.getTime() - window.start.getTime()) / DAY_MS,
 	);
@@ -118,5 +128,35 @@ export async function loadProfits(
 	for (const [id, byOrder] of takes)
 		if (!recipeOf.has(id)) own.set(id, [...byOrder.values()]);
 	const priced = new Set(costs.flatMap((c) => (c.cost === null ? [] : [c.id])));
-	return { own, priced, setsOf };
+	return { own, priced, costOf, setsOf };
+}
+
+// Units sold over the last 7, 30, 90, 180 and 365 days, today included,
+// counted as reorder counts them (sets as their parts, no FBA).
+export type Sales = {
+	d7: number;
+	d30: number;
+	d90: number;
+	d180: number;
+	d365: number;
+};
+
+export const NO_SALES: Sales = { d7: 0, d30: 0, d90: 0, d180: 0, d365: 0 };
+
+export async function loadSales(db: Db, window: DemandWindow) {
+	const end = window.end.getTime();
+	const since = new Date(end - YEAR_DAYS * DAY_MS);
+	const sales = new Map<number, Sales>();
+	for (const r of await soldByDay(db, since)) {
+		const ago = (end - Date.parse(`${r.day}T00:00:00Z`)) / DAY_MS;
+		if (ago <= 0 || ago > YEAR_DAYS) continue;
+		const s = sales.get(r.productId) ?? { ...NO_SALES };
+		s.d365 += r.units;
+		if (ago <= 180) s.d180 += r.units;
+		if (ago <= 90) s.d90 += r.units;
+		if (ago <= 30) s.d30 += r.units;
+		if (ago <= 7) s.d7 += r.units;
+		sales.set(r.productId, s);
+	}
+	return sales;
 }

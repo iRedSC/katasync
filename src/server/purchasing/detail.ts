@@ -9,6 +9,7 @@ import {
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrders,
+	supplierOffers,
 	suppliers,
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
@@ -38,6 +39,7 @@ import { landedTerms } from "#/purchasing/orders/revalue";
 import { orderPayables } from "#/purchasing/payables";
 import {
 	DEFAULT_SETTINGS,
+	priorityRanks,
 	recommendedAdditions,
 	reorderBreakdown,
 	suggestionFor,
@@ -194,10 +196,30 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 						),
 					)
 				: [],
-			// Why reorder wants what it does of each, for the velocity gauge.
-			reorderBreakdown(db, { productIds }).then(
-				(all) => new Map(all.map((b) => [b.line.productId, b.why])),
-			),
+			// Why reorder wants what it does of each, and where each of the
+			// supplier's products ranks among them (P1 first): this PO's
+			// products and everything the supplier sells, read together.
+			db
+				.select({ productId: supplierOffers.productId })
+				.from(supplierOffers)
+				.where(eq(supplierOffers.supplierId, po.supplier.id))
+				.then(async (offered) => {
+					const theirs = offered.map((o) => o.productId);
+					const all = await reorderBreakdown(db, {
+						productIds: [...new Set([...productIds, ...theirs])],
+					});
+					const sold = new Set(theirs);
+					const ranks = priorityRanks(
+						all.filter((b) => sold.has(b.line.productId)),
+						(b) => b.line.productId,
+						(b) => b.why.priority,
+					);
+					return {
+						why: new Map(all.map((b) => [b.line.productId, b.why])),
+						ranks: Object.fromEntries(ranks) as Record<number, number>,
+						ranked: ranks.size,
+					};
+				}),
 			orderPayables(db, data.id),
 			damagesOf(db, data.id),
 			emailsOf(db, data.id),
@@ -231,15 +253,17 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				// Every line's product has one; ?? only satisfies the Map type.
 				stockRange: ranges.get(l.productId) ?? null,
 				// Null for tool sets: they're ordered as their parts.
-				why: whys.get(l.productId) ?? null,
+				why: whys.why.get(l.productId) ?? null,
 				otherPos: elsewhere(l.productId),
 			})),
 			setParts: setParts.map((p) => ({
 				...p,
 				onHand: onHand.get(p.productId) ?? 0,
 				stockRange: ranges.get(p.productId) ?? null,
-				why: whys.get(p.productId) ?? null,
+				why: whys.why.get(p.productId) ?? null,
 			})),
+			// Each of the supplier's products' place, P1 first, of `ranked`.
+			priority: { ranks: whys.ranks, ranked: whys.ranked },
 			recommended: (await withBulk(db, po.supplier.id, recommended)).map(
 				(r) => ({ ...r, otherPos: elsewhere(r.productId) }),
 			),

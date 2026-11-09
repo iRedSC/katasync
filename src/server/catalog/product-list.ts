@@ -25,6 +25,7 @@ import {
 	draftLines,
 	loadPlan,
 	needsOf,
+	priorityRanks,
 	reorderBreakdown,
 	unitsOnOrder,
 } from "#/purchasing/reorder";
@@ -148,6 +149,13 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 		const onHand = new Map(onHandRows.map((r) => [r.productId, r.onHand]));
 		const need = new Map(needsOf(breakdown).map((n) => [n.productId, n]));
 		const why = new Map(breakdown.map((b) => [b.line.productId, b.why]));
+		// Where each stands across the catalog, P1 first. Tool sets are
+		// bought as their parts, so they have no place.
+		const priorityRank = priorityRanks(
+			breakdown.filter((b) => b.kind !== "bundle"),
+			(b) => b.line.productId,
+			(b) => b.why.priority,
+		);
 		const shopify = shopifyFiling(filing);
 		const listed = rows.map(
 			({
@@ -211,6 +219,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 					// Why reorder wants what it does, for the velocity gauge. Null for
 					// tool sets, which are ordered as their parts.
 					why: r.kind === "bundle" ? null : (why.get(r.id) ?? null),
+					priorityRank: priorityRank.get(r.id) ?? null,
 				};
 			},
 		);

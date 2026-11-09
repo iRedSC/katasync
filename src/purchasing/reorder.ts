@@ -15,7 +15,10 @@ export {
 	planFor,
 } from "#/purchasing/reorder/plan";
 export {
+	comparePriority,
 	type Priority,
+	priorityRanks,
+	type Tone,
 	WAIT_DAYS,
 } from "#/purchasing/reorder/priority";
 export {

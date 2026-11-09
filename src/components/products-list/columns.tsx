@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { CatalogMark } from "#/components/catalog-mark";
-import { PriorityScore } from "#/components/priority-score";
+import { PriorityRank } from "#/components/priority-score";
 import {
 	ClassCell,
 	CountedCell,
@@ -157,9 +157,12 @@ const COLUMN_DEFS = {
 		firstDesc: true,
 		align: "center",
 		from: "md",
-		tip: "Profit a week's wait would lose, 0 to 100. Hover for the dollars",
+		tip: "What to buy first across the catalog. The color says whether it needs buying",
 		cell: ({ product }) => (
-			<PriorityScore priority={product.why?.priority ?? null} />
+			<PriorityRank
+				priority={product.why?.priority ?? null}
+				rank={product.priorityRank}
+			/>
 		),
 	},
 	runout: {
@@ -336,7 +339,6 @@ export const LENSES = {
 			"stock",
 			"range",
 			"onorder",
-			"velocity",
 			"priority",
 			"runout",
 			"reorder",

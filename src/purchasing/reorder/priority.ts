@@ -1,12 +1,12 @@
-// How much profit a product loses if its reorder waits. Reorder decides how
-// many to buy; this decides which come first. Pure: the loader is
-// ./profit.ts.
+// Which of a list of products to buy first, and whether any of them needs
+// buying at all. Reorder decides how many; this decides the order. Pure: the
+// loader is ./profit.ts.
 //
-// The dollars are a week's delay: the days it would sit sold out between
-// when a PO sent today lands and when one sent a week from now would,
-// times what a day of it earns. A product whose shelf and open POs cover
-// that week loses nothing by waiting, however low it looks. One already
-// out, whose PO lands in time anyway, loses nothing either.
+// Two answers, kept apart. `tone` is absolute: red loses profit before a PO
+// sent today could land, or sits at zero; orange runs out in the week after;
+// yellow is below where reorder wants it, or unproven; green is covered.
+// comparePriority is relative: it orders any list, so each list ranks
+// P1, P2, ... however many products it holds, and never ties a list at zero.
 
 // How long a product waits if it isn't ordered today: until the next order.
 export const WAIT_DAYS = 7;
@@ -21,9 +21,18 @@ export const SET_SHARE = 0.5;
 
 const DAY_MS = 86_400_000;
 
-// One order's take of a product: its profit, and the window day it was
-// placed on (0 is the window's first).
+// One order's take of a product: its profit, and the day it was placed on,
+// counted from the 90 day demand window's first (older orders are negative,
+// back to a year).
 export type OrderTake = { day: number; profit: number };
+
+// Sales from 90 days set a product's rate once it has any there. None, and
+// the year's are used: the catalog sells slowly, and a tool that sells four
+// times a year is still worth keeping.
+export const MIN_RECENT_ORDERS = 1;
+export const YEAR_DAYS = 365;
+// How far before the demand window's first day the year reaches.
+const YEAR_BEFORE = YEAR_DAYS - 90;
 
 // What a day of a product earns, from its own orders over the days it was
 // in stock. Orders, not units: four boxes of sponges in one order is one
@@ -67,21 +76,23 @@ export function setDailyOf(sets: SetProfit[]) {
 export type Incoming = { units: number; inDays: number | null };
 
 // Days in [from, to) the shelf sits empty, selling `daily` a day from
-// `onHand`, with `incoming` landing. Unknown arrivals are counted as
-// landing at `from`, when an order sent today would: ordering again
-// wouldn't bring anything sooner, so they never make a duplicate urgent.
+// `onHand`, with `incoming` landing. Unknown arrivals are counted as landing
+// at `unknownAt` (by default `from`), when an order sent today would:
+// ordering again wouldn't bring anything sooner, so they never make a
+// duplicate urgent.
 export function daysOut(
 	onHand: number,
 	daily: number,
 	incoming: Incoming[],
 	from: number,
 	to: number,
+	unknownAt = from,
 ) {
 	if (daily <= 0 || to <= from) return 0;
 	const events = incoming
 		.filter((a) => a.units > 0)
 		.map((a) => ({
-			at: a.inDays === null || a.inDays < 0 ? from : a.inDays,
+			at: a.inDays === null || a.inDays < 0 ? unknownAt : a.inDays,
 			units: a.units,
 		}))
 		.filter((a) => a.at < to)
@@ -111,10 +122,14 @@ export const incomingOf = (
 		inDays: a.arrivesAt === null ? null : (a.arrivesAt - now) / DAY_MS,
 	}));
 
-// A product's priority, with every piece the score came from.
+export type Tone = "red" | "orange" | "yellow" | "green";
+
+// A product's priority, with every piece it came from.
 export type Priority = {
-	// 0 to 100, log scaled: 100 is the best earner out the whole week.
-	score: number;
+	tone: Tone;
+	// Sold in the last year, itself or in a tool set that did. Unproven ones
+	// rank by stock and what they cost, since nothing says what they earn.
+	proven: boolean;
 	// Profit lost if it waits WAIT_DAYS: daysOut × (own + sets) per day.
 	atRisk: number;
 	daysOut: number;
@@ -124,6 +139,15 @@ export type Priority = {
 	sets: number;
 	// Share of weeks it sold in, 0 to 1.
 	steadiness: number;
+	// Days the shelf and POs landing in time last at its rate; null when it
+	// doesn't sell, so never runs out.
+	coverDays: number | null;
+	onHand: number;
+	// Units sold in the last year: breaks ties between sellers whose profit
+	// can't be told apart, such as parts that sell inside sets.
+	soldYear: number;
+	// Per unit, what an unproven product is ranked by. Null without one.
+	unitCost: number | null;
 };
 
 export type PriorityInput = {
@@ -131,45 +155,157 @@ export type PriorityInput = {
 	open: boolean[];
 	sets: SetProfit[];
 	onHand: number;
-	// Units a day, sets' parts included, as reorder forecasts.
+	// Units a day, sets' parts included: as reorder forecasts, or the year's
+	// when the last 90 days sold nothing.
 	dailyDemand: number;
 	incoming: Incoming[];
 	leadTimeDays: number;
+	// Reorder wants some today (src/purchasing/reorder/quantity.ts).
+	needsOrder: boolean;
+	// Units sold in the last year, sets' parts included, even without a cost
+	// to value them.
+	soldYear: number;
+	unitCost: number | null;
 };
 
-// A day's profit, own and from sets.
+// A day's profit, own and from sets: from the last 90 days' in-stock days
+// when it sold in them, else from the whole year.
 export function earnings(p: Pick<PriorityInput, "orders" | "open" | "sets">) {
-	const openDays = Math.max(p.open.filter(Boolean).length, 14);
-	const steadiness = steadinessOf(p.orders, p.open);
+	const recent = p.orders.filter((o) => o.day >= 0);
+	if (recent.length >= MIN_RECENT_ORDERS || p.orders.length === 0) {
+		const openDays = Math.max(p.open.filter(Boolean).length, 14);
+		const steadiness = steadinessOf(recent, p.open);
+		return {
+			own: dailyProfitOf(recent, openDays) * steadyWeight(steadiness),
+			sets: setDailyOf(p.sets),
+			steadiness,
+		};
+	}
+	const year = p.orders.map((o) => ({ ...o, day: o.day + YEAR_BEFORE }));
+	const steadiness = steadinessOf(
+		year,
+		Array.from({ length: YEAR_DAYS }, () => true),
+	);
 	return {
-		own: dailyProfitOf(p.orders, openDays) * steadyWeight(steadiness),
+		own: dailyProfitOf(year, YEAR_DAYS) * steadyWeight(steadiness),
 		sets: setDailyOf(p.sets),
 		steadiness,
 	};
 }
 
-// `best` is the most a day of any product earns, which sets 100.
-export function priorityOf(p: PriorityInput, best: number): Priority {
+// Days until the shelf runs dry selling `daily`, with what lands in time.
+// Unknown arrivals land at `unknownAt`. Null when it never sells.
+export function coverOf(
+	onHand: number,
+	daily: number,
+	incoming: Incoming[],
+	unknownAt: number,
+) {
+	if (daily <= 0) return null;
+	const events = incoming
+		.filter((a) => a.units > 0)
+		.map((a) => ({
+			at: a.inDays === null || a.inDays < 0 ? unknownAt : a.inDays,
+			units: a.units,
+		}))
+		.sort((a, b) => a.at - b.at);
+	let stock = Math.max(onHand, 0);
+	let t = 0;
+	for (const e of events) {
+		const empty = t + stock / daily;
+		if (empty < e.at) return empty;
+		stock -= (e.at - t) * daily;
+		t = e.at;
+		stock += e.units;
+	}
+	return t + stock / daily;
+}
+
+export function priorityOf(p: PriorityInput): Priority {
 	const { own, sets, steadiness } = earnings(p);
+	const proven = p.orders.length > 0 || sets > 0 || p.soldYear > 0;
+	const lead = p.leadTimeDays;
+	const before = daysOut(p.onHand, p.dailyDemand, p.incoming, 0, lead, lead);
 	const out = daysOut(
 		p.onHand,
 		p.dailyDemand,
 		p.incoming,
-		p.leadTimeDays,
-		p.leadTimeDays + WAIT_DAYS,
+		lead,
+		lead + WAIT_DAYS,
 	);
-	const atRisk = out * (own + sets);
-	const top = best * WAIT_DAYS;
-	const score =
-		top <= 0
-			? 0
-			: Math.min(100, Math.round((100 * Math.log1p(atRisk)) / Math.log1p(top)));
+	const tone: Tone =
+		p.onHand <= 0 || (proven && before > 0)
+			? "red"
+			: proven && out > 0
+				? "orange"
+				: !proven || p.needsOrder
+					? "yellow"
+					: "green";
 	return {
-		score,
-		atRisk,
+		tone,
+		proven,
+		atRisk: out * (own + sets),
 		daysOut: out,
 		own,
 		sets,
 		steadiness,
+		coverDays: coverOf(p.onHand, p.dailyDemand, p.incoming, lead),
+		onHand: p.onHand,
+		soldYear: p.soldYear,
+		unitCost: p.unitCost,
 	};
+}
+
+// Which group a product ranks in, first to last: proven ones losing profit
+// or sitting at zero, unproven ones at zero (cut them, or stock them to find
+// out), unproven ones with stock, the fewer the sooner, then proven ones that
+// are covered. Unproven never crowd out a proven seller running low.
+function bandOf(p: Priority) {
+	if (p.proven) return p.tone === "red" || p.tone === "orange" ? 0 : 3;
+	return p.onHand <= 0 ? 1 : 2;
+}
+
+// Each extra unit an unproven product has on hand halves its chance of
+// selling out before anyone learns whether it sells.
+const unprovenChance = (onHand: number) => 0.5 ** Math.max(onHand, 0);
+
+// Within a group, the more it stands to lose, the sooner.
+function weightOf(p: Priority) {
+	switch (bandOf(p)) {
+		case 0:
+			return p.atRisk;
+		case 1:
+			return p.unitCost ?? 0;
+		case 2:
+			return (p.unitCost ?? 0) * unprovenChance(p.onHand);
+		default:
+			return (p.own + p.sets) / ((p.coverDays ?? Number.POSITIVE_INFINITY) + 1);
+	}
+}
+
+// Orders any list most urgent first: by group, then what it stands to lose,
+// then what it earns, then what it sold, then the less on hand. Null (not
+// counted) goes last.
+export function comparePriority(a: Priority | null, b: Priority | null) {
+	if (a === null || b === null)
+		return (a === null ? 1 : 0) - (b === null ? 1 : 0);
+	return (
+		bandOf(a) - bandOf(b) ||
+		weightOf(b) - weightOf(a) ||
+		b.own + b.sets - (a.own + a.sets) ||
+		b.soldYear - a.soldYear ||
+		a.onHand - b.onHand
+	);
+}
+
+// Each product's place in `list`, 1 first.
+export function priorityRanks<T>(
+	list: T[],
+	idOf: (t: T) => number,
+	priorityOf: (t: T) => Priority | null,
+): Map<number, number> {
+	const sorted = [...list].sort((a, b) =>
+		comparePriority(priorityOf(a), priorityOf(b)),
+	);
+	return new Map(sorted.map((t, i) => [idOf(t), i + 1]));
 }
