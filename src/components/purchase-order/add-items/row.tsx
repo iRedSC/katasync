@@ -3,6 +3,7 @@ import { AlertTriangle, Check, Loader2 } from "lucide-react";
 import { BulkChip } from "#/components/bulk-chip";
 import { OnPoChip } from "#/components/on-po-chip";
 import { Badge } from "#/components/page";
+import { PriorityScore } from "#/components/priority-score";
 import { ProductImage, SetsChip } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { Button } from "#/components/ui/button";
@@ -65,7 +66,6 @@ export function Row({
 							)}
 							{c.kind === "bundle" && <span>Tool set</span>}
 							{c.kind === "kit" && <span>Kit</span>}
-							{c.critical && <Badge tone="info">Essential</Badge>}
 							{c.cheaperAt && <CheaperAt at={c.cheaperAt} />}
 							{c.warning && (
 								<span className="flex items-center gap-1 text-warning-text">
@@ -116,6 +116,9 @@ export function Row({
 				) : (
 					<span className="block text-center text-muted-foreground">—</span>
 				)}
+			</td>
+			<td className="px-3 py-2">
+				<PriorityScore priority={c.why?.priority ?? null} />
 			</td>
 			<td className="px-3 py-2 text-right tabular-nums">
 				{c.kind === "bundle" ? (

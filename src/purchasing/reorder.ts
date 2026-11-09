@@ -1,4 +1,5 @@
 export { DEMAND_DAYS } from "#/purchasing/forecast";
+export { losingProfit } from "#/purchasing/reorder/at-risk";
 export {
 	type CheaperAt,
 	needsOf,
@@ -13,6 +14,10 @@ export {
 	type Plan,
 	planFor,
 } from "#/purchasing/reorder/plan";
+export {
+	type Priority,
+	WAIT_DAYS,
+} from "#/purchasing/reorder/priority";
 export {
 	DEFAULT_SETTINGS,
 	type RecommendedLine,
@@ -34,7 +39,6 @@ export {
 	velocityRanks,
 } from "#/purchasing/reorder/quantity";
 export {
-	aItemsAtRisk,
 	draftLines,
 	membershipOf,
 	openArrivals,
@@ -42,7 +46,6 @@ export {
 	unitsOnOrder,
 } from "#/purchasing/reorder/stock";
 export {
-	isCritical,
 	ordersItself,
 	type Readiness,
 	readiness,

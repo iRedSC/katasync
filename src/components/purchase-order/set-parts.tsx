@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle } from "lucide-react";
 import { Fragment } from "react";
+import { PriorityScore } from "#/components/priority-score";
 import { ProductImage } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { Button } from "#/components/ui/button";
@@ -136,6 +137,9 @@ export function SetPartRow({
 				) : (
 					<span className="block text-center text-muted-foreground">—</span>
 				)}
+			</td>
+			<td className="px-3 py-2">
+				<PriorityScore priority={here ? (p.why?.priority ?? null) : null} />
 			</td>
 			<td className="px-3 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
 				{here && p.unitCost !== null ? formatMoney(p.unitCost) : "—"}

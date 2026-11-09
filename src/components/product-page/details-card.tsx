@@ -14,7 +14,7 @@ import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import type { ProductDetail } from "#/server/catalog";
 import { updateProduct } from "#/server/catalog/product-edits";
-import { AerosolToggle, CriticalToggle, InsureToggle } from "./flag-toggles";
+import { AerosolToggle, InsureToggle } from "./flag-toggles";
 
 type Product = ProductDetail["product"];
 // What one save changes, as updateProduct takes it: null clears a field.
@@ -373,12 +373,6 @@ export function DetailsCard({ d }: { d: ProductDetail }) {
 					insure={p.insureWhenShipped}
 				/>
 				<AerosolToggle productId={p.id} sku={p.sku} aerosol={p.aerosol} />
-				<CriticalToggle
-					productId={p.id}
-					sku={p.sku}
-					critical={p.critical}
-					isA={d.abc?.abc === "A"}
-				/>
 			</div>
 		</Card>
 	);

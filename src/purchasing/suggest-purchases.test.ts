@@ -51,61 +51,41 @@ describe("suggestPurchases", () => {
 		});
 	});
 
-	test("isn't ready below the supplier's minimum, and lists unpriced lines", async () => {
+	test("waits below the supplier's minimum while nothing loses profit, and leaves off what can't be valued", async () => {
 		const blade = await createProduct(db, "BLADE", "simple");
 		const knife = await createProduct(db, "KNIFE", "simple");
 		await supply(blade, 1);
+		// No cost anywhere, so no profit to weigh: only recommended.
 		await supply(knife, null);
 		await stock(knife, -1);
+		await sell(knife, 5);
 		await sell(blade, 90);
-		// Unsold, so a C item: only marked critical does it go on the PO.
-		await db
-			.update(schema.products)
-			.set({ critical: true })
-			.where(eq(schema.products.id, knife));
-		await db
-			.update(schema.suppliers)
-			.set({ criticalThreshold: 3 })
-			.where(eq(schema.suppliers.id, canam));
+		// 1 a day: 20 on the shelf outlast the 10 day lead time plus a week.
+		await stock(blade, 20);
 
 		const [s] = await suggestPurchases(db, now);
-		expect(s.lines.map((l) => l.sku)).toEqual(["BLADE", "KNIFE"]);
-		// Blade is an A item: 90 sold in the cover days, none on the shelf, at
-		// $1. Knife is one short of zero, so it's ordered back to one.
-		expect(s).toMatchObject({ total: 90, unpriced: 1, readiness: "waiting" });
+		expect(s.lines.map((l) => l.sku)).toEqual(["BLADE"]);
+		// Blade tops up to the 90 sold in the cover days, less the 20 there,
+		// at $1.
+		expect(s).toMatchObject({ total: 70, atRisk: 0, readiness: "waiting" });
 	});
 
-	test("is ready below the minimum once enough critical products need it, and soon at twice that", async () => {
+	test("shows a supplier under its minimum once waiting loses profit", async () => {
 		const blade = await createProduct(db, "BLADE", "simple");
-		const knife = await createProduct(db, "KNIFE", "simple");
 		await supply(blade, 1);
-		await supply(knife, 1);
-		await sell(blade, 90); // an A item, so critical
-		await stock(knife, -1);
+		// Sold out, so the week after a PO lands is lost. Few enough that the
+		// PO stays under the $100 minimum.
+		await sell(blade, 9);
 
 		let [s] = await suggestPurchases(db, now);
-		expect(s).toMatchObject({ critical: 1, readiness: "waiting" });
-
-		await db
-			.update(schema.products)
-			.set({ critical: true })
-			.where(eq(schema.products.id, knife));
-		[s] = await suggestPurchases(db, now);
-		// The supplier's threshold is 2 by default.
-		expect(s).toMatchObject({ critical: 2, readiness: "ready" });
+		expect(s.readiness).toBe("short");
+		expect(s.atRisk).toBeGreaterThan(0);
 
 		await db
 			.update(schema.suppliers)
-			.set({ criticalThreshold: 1 })
+			.set({ minimumOrder: 5 })
 			.where(eq(schema.suppliers.id, canam));
 		[s] = await suggestPurchases(db, now);
-		expect(s.readiness).toBe("soon");
-
-		await db
-			.update(schema.suppliers)
-			.set({ criticalThreshold: 3 })
-			.where(eq(schema.suppliers.id, canam));
-		[s] = await suggestPurchases(db, now);
-		expect(s.readiness).toBe("waiting");
+		expect(s.readiness).toBe("ready");
 	});
 });

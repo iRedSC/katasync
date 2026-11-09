@@ -1,8 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
-import { products } from "#/db/schema";
 import { setPosLocation } from "#/inventory/locations";
 import {
 	setDefaultMinStock,
@@ -12,8 +10,8 @@ import { changeRetailReserve } from "#/stock-push/reserve";
 import { ourLocation, productBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
 
-// The settings behind stock ranges, overflow, and what counts as essential,
-// as the app's Settings and product pages change them.
+// The settings behind stock ranges and overflow, as the app's Settings and
+// product pages change them.
 export function registerStockSettingsTools(server: McpServer, db: Db) {
 	server.registerTool(
 		"set_retail_reserve",
@@ -77,24 +75,6 @@ export function registerStockSettingsTools(server: McpServer, db: Db) {
 			const product = await productBySku(db, sku);
 			await setProductStockRange(db, product.id, range);
 			return json({ sku, range });
-		},
-	);
-
-	server.registerTool(
-		"set_critical",
-		{
-			description:
-				"Whether a product is essential: it counts toward a supplier's critical threshold, so needing it can make a suggested PO ready whatever the spend.",
-			inputSchema: { sku: z.string(), critical: z.boolean() },
-			annotations: { ...WRITE, idempotentHint: true },
-		},
-		async ({ sku, critical }) => {
-			const product = await productBySku(db, sku);
-			await db
-				.update(products)
-				.set({ critical })
-				.where(eq(products.id, product.id));
-			return json({ sku, critical });
 		},
 	);
 }

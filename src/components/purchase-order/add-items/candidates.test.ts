@@ -103,7 +103,6 @@ const rec = (productId: number, unitCost: number) =>
 		why: null,
 		otherPos: [],
 		bulk: null,
-		critical: false,
 		cheaperAt: null,
 	}) as unknown as Recommendation;
 

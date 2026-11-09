@@ -19,23 +19,25 @@ import {
 	setsSoldIn,
 	soldInWindow,
 } from "#/purchasing/forecast";
-import { setFloorOf, setMembership, setsBlocked } from "#/purchasing/sets";
-import { DEFAULT_COVER_DAYS, loadPlan, type Plan } from "./plan";
+import { setFloorOf, setMembership } from "#/purchasing/sets";
+import { DEFAULT_COVER_DAYS, loadPlan, type Plan, planFor } from "./plan";
+import { earnings, incomingOf, type Priority, priorityOf } from "./priority";
+import { loadProfits } from "./profit";
 import {
 	explainReorder,
 	forecastMax,
 	type ReorderInput,
+	type ReorderWhy,
 	reorderQuantity,
 	velocityRanks,
 } from "./quantity";
 import { setRecipes, stockAndArrivals } from "./stock";
-import { isCritical, ordersItself, type SuggestedLine } from "./suggested";
+import { ordersItself, type SuggestedLine } from "./suggested";
 
 type Supplier = {
 	supplierId: number;
 	supplierName: string;
 	minimumOrder: number;
-	criticalThreshold: number;
 };
 
 // One product that needs ordering, with the supplier it comes from.
@@ -102,7 +104,6 @@ export async function reorderBreakdown(
 					name: products.name,
 					variantName: products.variantName,
 					imageUrl: products.imageUrl,
-					markedCritical: products.critical,
 					notCounted: sql<boolean>`${products.notCountedSince} is not null`,
 					minStock: products.minStock,
 					maxStock: products.maxStock,
@@ -118,7 +119,6 @@ export async function reorderBreakdown(
 					supplierName: suppliers.name,
 					coverDays: suppliers.coverDays,
 					minimumOrder: suppliers.minimumOrder,
-					criticalThreshold: suppliers.criticalThreshold,
 					cheapestId: cheapestSupplier.id,
 					cheapestName: cheapestSupplier.name,
 					cheapestCode: cheapestSupplier.code,
@@ -158,30 +158,42 @@ export async function reorderBreakdown(
 			setsSoldIn(db, demand),
 			setRecipes(db),
 		]);
-	const { onHand, onOrder } = supply;
+	const { onHand, onOrder, arrivals } = supply;
 	const ranks = velocityRanks(planned.forecasts);
 	const sets = setMembership(recipes, onHand, setsSold);
+	const profits = await loadProfits(db, demand, recipes);
+	const openOf = (id: number) =>
+		(planned.forecasts.get(id) ?? NO_FORECAST).days.map(
+			(d) => d.inStock || d.units > 0,
+		);
+	const inputsOf = (id: number) => ({
+		orders: profits.own.get(id) ?? [],
+		open: openOf(id),
+		sets: profits.setsOf.get(id) ?? [],
+	});
+	// What a day of the best earner makes, which a score of 100 is a week of.
+	let best = 0;
+	for (const id of profits.priced) {
+		const e = earnings(inputsOf(id));
+		best = Math.max(best, e.own + e.sets);
+	}
 
 	return rows.map((p) => {
 		const rank = planned.abc.classes.get(p.productId);
-		const abcClass = rank?.abc ?? null;
 		const membership = sets.get(p.productId) ?? {
 			shelf: Math.max(onHand.get(p.productId) ?? 0, 0),
 			sets: [],
 		};
-		const blocked = setsBlocked(membership);
 		// The joins make these all null together, or none.
 		const supplier: Supplier | null =
 			p.supplierId === null ||
 			p.supplierName === null ||
-			p.minimumOrder === null ||
-			p.criticalThreshold === null
+			p.minimumOrder === null
 				? null
 				: {
 						supplierId: p.supplierId,
 						supplierName: p.supplierName,
 						minimumOrder: p.minimumOrder,
-						criticalThreshold: p.criticalThreshold,
 					};
 		const purchase =
 			supplier &&
@@ -219,6 +231,28 @@ export async function reorderBreakdown(
 			minimumQuantity: terms.minimumQuantity,
 			packSize: terms.packSize,
 		};
+		// Not counted sells without limit, and without a cost it can't be
+		// valued: neither has a priority.
+		const priority: Priority | null =
+			p.notCounted || !profits.priced.has(p.productId)
+				? null
+				: priorityOf(
+						{
+							...inputsOf(p.productId),
+							onHand: stock.onHand,
+							dailyDemand: forecast.dailyDemand,
+							incoming: incomingOf(
+								arrivals.get(p.productId) ?? [],
+								now.getTime(),
+							),
+							leadTimeDays: planFor(
+								planned,
+								p.productId,
+								supplier?.supplierId ?? null,
+							).leadTimeDays,
+						},
+						best,
+					);
 		const line: SuggestedLine = {
 			productId: p.productId,
 			sku: p.sku,
@@ -233,15 +267,18 @@ export async function reorderBreakdown(
 			quantity: p.notCounted ? 0 : reorderQuantity(input),
 			// The supplier's price, or none: our average cost isn't theirs.
 			unitCost: p.cost,
-			critical: isCritical(p.markedCritical, abcClass, blocked),
+			priority,
 		};
-		const why = explainReorder(input, {
-			inStockDays: forecast.inStockDays,
-			outDays: recent.outDays,
-			rank: ranks.get(p.productId) ?? null,
-			purchase,
-			sets: membership,
-		});
+		const why: ReorderWhy = {
+			...explainReorder(input, {
+				inStockDays: forecast.inStockDays,
+				outDays: recent.outDays,
+				rank: ranks.get(p.productId) ?? null,
+				purchase,
+				sets: membership,
+			}),
+			priority,
+		};
 		// Only with `from`: the cheapest is someone else, at a known lower
 		// price. An unpriced offer loses to any priced one.
 		const cheaperAt: CheaperAt | null =
@@ -282,7 +319,7 @@ export async function reorderBreakdown(
 			barcode: p.barcode,
 			range,
 			max: range.max,
-			ordersItself: ordersItself(p.markedCritical, abcClass, blocked),
+			ordersItself: ordersItself(priority),
 			notCounted: p.notCounted,
 			// A C item nobody has sold or counted in a year is dead stock, or
 			// was never really stocked: nothing to recommend. Unpriced products

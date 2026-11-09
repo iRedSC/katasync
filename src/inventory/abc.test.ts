@@ -4,7 +4,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { postMovements, recordCount, recordSale } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
-import { aItemsAtRisk } from "#/purchasing/reorder";
+import { losingProfit } from "#/purchasing/reorder";
 import { createProduct, createTestDb } from "#/test/db";
 import { abcClasses, classify } from "./abc";
 
@@ -228,7 +228,7 @@ describe("with a database", () => {
 		expect(level.lastCountedAt).toBeInstanceOf(Date);
 	});
 
-	test("flags A items that run out before a new PO could arrive", async () => {
+	test("lists what loses profit if its reorder waits a week, the most first", async () => {
 		const fast = await product("FAST", 10);
 		const slow = await product("SLOW", 1);
 		// 90 sold over 90 days: 1 a day against the default 14 day lead time.
@@ -244,21 +244,24 @@ describe("with a database", () => {
 				},
 			],
 		});
-		expect(await aItemsAtRisk(db, now)).toMatchObject([
-			{ sku: "FAST", daysLeft: 5, leadTimeDays: 14 },
+		// Out from day 5, so the whole week after a PO sent today lands.
+		// SLOW's one sale earns too little a week to list.
+		expect(await losingProfit(db, now)).toMatchObject([
+			{ sku: "FAST", priority: { daysOut: 7 } },
 		]);
 
+		// 35 on hand lasts past day 21: waiting costs nothing.
 		await postMovements(db, {
 			lines: [
 				{
 					productId: fast,
 					locationId: warehouse,
-					delta: 10,
+					delta: 30,
 					reason: "opening_balance",
 				},
 			],
 		});
-		expect(await aItemsAtRisk(db, now)).toEqual([]);
+		expect(await losingProfit(db, now)).toEqual([]);
 	});
 
 	describe("units on order", () => {
@@ -301,37 +304,34 @@ describe("with a database", () => {
 			});
 		}
 		const daysAhead = (n: number) => daysAgo(-n);
+		const losing = async () =>
+			(await losingProfit(db, now)).map((r) => [r.sku, r.priority.daysOut]);
 
-		test("ignores a PO that arrives after the shelf runs out", async () => {
-			await fastWithSentPo({ expectedAt: null }, 15);
-			expect(await aItemsAtRisk(db, now)).toMatchObject([
-				{ sku: "FAST", daysLeft: 5 },
-			]);
+		test("a PO landing after the week leaves the week lost", async () => {
+			// Sent a day ago with 30 days of lead time: lands on day 29.
+			await fastWithSentPo({ expectedAt: null }, 30);
+			expect(await losing()).toEqual([["FAST", 7]]);
 		});
 
-		test("counts a PO that arrives in time", async () => {
-			// Sent a day ago with 3 days of lead time: lands in 2 days.
+		test("a PO landing before the week takes it off", async () => {
 			await fastWithSentPo({ expectedAt: null }, 3);
-			expect(await aItemsAtRisk(db, now)).toEqual([]);
+			expect(await losing()).toEqual([]);
 		});
 
-		test("ignores a PO that is already overdue", async () => {
+		test("a promised date inside the week saves the rest of it", async () => {
+			// Default lead 14: the week is days 14 to 21; it lands on day 16.
+			await fastWithSentPo({ expectedAt: daysAhead(16) }, 14);
+			expect(await losing()).toEqual([["FAST", 2]]);
+		});
+
+		test("an overdue PO counts as landing with a new one, so it isn't ordered twice", async () => {
 			await fastWithSentPo({ expectedAt: null, sentAt: daysAgo(20) });
-			expect(await aItemsAtRisk(db, now)).toMatchObject([
-				{ sku: "FAST", daysLeft: 5 },
-			]);
+			expect(await losing()).toEqual([]);
 		});
 
-		test("a current promised date overrides the supplier's lead time", async () => {
-			await fastWithSentPo({ expectedAt: daysAhead(3) }, 30);
-			expect(await aItemsAtRisk(db, now)).toEqual([]);
-		});
-
-		test("a past promised date needs a new date instead of inventing a lead-time arrival", async () => {
+		test("a past promised date counts the same", async () => {
 			await fastWithSentPo({ expectedAt: daysAgo(1) }, 3);
-			expect(await aItemsAtRisk(db, now)).toMatchObject([
-				{ sku: "FAST", daysLeft: 5 },
-			]);
+			expect(await losing()).toEqual([]);
 		});
 	});
 });

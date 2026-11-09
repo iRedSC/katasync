@@ -138,14 +138,19 @@ export function registerReadTools(server: McpServer, db: Db) {
 		"reorder_suggestions",
 		{
 			description:
-				"What each supplier should be sent today: per product, units sold in the last 90 days, on hand, on order, and the quantity to order in the supplier's unit. Each product is topped up to what it sold over the supplier's cover days, less on hand and open POs, with min stock, minimums, and tool sets a part leaves unsellable as floors.",
+				"What each supplier should be sent today: per product, units sold in the last 90 days, on hand, on order, and the quantity to order in the supplier's unit. Each product is topped up to what it sold over the supplier's cover days, less on hand and open POs, with min stock, minimums, and tool sets a part leaves unsellable as floors. Lines come most urgent first by priority: score 0 to 100 (log scale; 100 is the best earner sold out a whole week), atRisk the profit in USD lost if it waits 7 days (daysOut of those 7 sold out, times own plus sets profit a day; steadiness is the share of weeks it sold). critical is score 60 or more. Null priority: no cost, or not counted.",
 			inputSchema: {
 				supplier: z.string().optional().describe("Code or name"),
 			},
 			annotations: READ,
 		},
 		async ({ supplier }) => {
-			const all = await suggestPurchases(db);
+			const all = (await suggestPurchases(db)).map((s) => ({
+				...s,
+				lines: [...s.lines].sort(
+					(a, b) => (b.priority?.atRisk ?? -1) - (a.priority?.atRisk ?? -1),
+				),
+			}));
 			if (!supplier) return json(all);
 			const { id } = await supplierByRef(db, supplier);
 			return json(all.filter((s) => s.supplierId === id));

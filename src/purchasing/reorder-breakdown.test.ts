@@ -180,7 +180,7 @@ describe("reorderBreakdown", () => {
 });
 
 describe("tool set parts", () => {
-	test("a C part that leaves a set unsellable goes on the PO by itself", async () => {
+	test("a part earns from the tool sets it's in, so a set that sells puts it on the PO", async () => {
 		const blade = await createProduct(db, "BLADE", "simple");
 		const knife = await createProduct(db, "KNIFE", "simple");
 		const loner = await createProduct(db, "LONER", "simple");
@@ -194,6 +194,10 @@ describe("tool set parts", () => {
 		for (const id of [blade, knife, loner]) await supply(id, 2);
 		await stock(knife, 1);
 		await stock(blade, 1);
+		// OTHER sold twice, so its profit counts toward Blade. SET never sold,
+		// so Knife earns nothing from it.
+		await sell(other, 5);
+		await sell(other, 5);
 		// LONER is short of min stock too, but in no set. Counted, so it isn't
 		// dormant.
 		await stock(loner, 1);
@@ -208,7 +212,7 @@ describe("tool set parts", () => {
 
 		const all = await reorderBreakdown(db, { now });
 		const of = (id: number) => all.find((b) => b.line.productId === id);
-		// Never sold, so all C items. Blade can build neither set.
+		// Blade can build neither set.
 		const sets = (id: number) => {
 			const m = of(id)?.why.sets;
 			return m && { in: m.sets.map((x) => x.sku), blocked: setsBlocked(m) };
@@ -219,12 +223,11 @@ describe("tool set parts", () => {
 		expect(of(blade)?.why).toMatchObject({ minStock: 3, minFrom: "sets" });
 
 		const [s] = await suggestPurchases(db, now);
-		// Topped up to one of the set that takes most: 3, less the 1 there.
-		// Essential too, so it counts toward the essential threshold.
-		expect(s.lines.map((l) => [l.sku, l.quantity, l.critical])).toEqual([
-			["BLADE", 2, true],
-		]);
-		expect(s.critical).toBe(1);
+		// Topped up to the 30 OTHER took, less the 1 there. Knife is short of
+		// SET but earns nothing, so it isn't on the PO; never sold or counted,
+		// it isn't recommended either.
+		expect(s.lines.map((l) => [l.sku, l.quantity])).toEqual([["BLADE", 29]]);
+		expect(s.lines[0].priority?.sets).toBeGreaterThan(0);
 		const r = await recommendedAdditions(
 			db,
 			canam,

@@ -4,6 +4,7 @@ import type { RefObject } from "react";
 import { BulkChip } from "#/components/bulk-chip";
 import { OnPoChip } from "#/components/on-po-chip";
 import { Badge } from "#/components/page";
+import { PriorityScore } from "#/components/priority-score";
 import { ProductImage, SetsChip } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { SetGauge } from "#/components/set-gauge";
@@ -279,6 +280,11 @@ export function LineRow({
 			{draft && (
 				<td className="px-3 py-2">
 					<VelocityGauge why={l.why} onPo={l} />
+				</td>
+			)}
+			{draft && (
+				<td className="px-3 py-2">
+					<PriorityScore priority={l.why?.priority ?? null} />
 				</td>
 			)}
 			<td className="px-3 py-2 whitespace-nowrap tabular-nums">

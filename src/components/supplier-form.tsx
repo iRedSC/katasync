@@ -10,7 +10,6 @@ import { toast } from "sonner";
 import { AddressInput } from "#/components/address-input";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
-import { Tip } from "#/components/ui/tooltip";
 import { optimism, type Patch } from "#/lib/optimism";
 import { caretAfterDigits, digitsBefore, formatPhoneInput } from "#/lib/phone";
 import { cn } from "#/lib/utils";
@@ -72,8 +71,6 @@ function refusal(v: Supplier): string | null {
 		return `Cover must be a whole number of days, 1 to ${DEMAND_DAYS}`;
 	if (!(v.minimumOrder >= 0))
 		return "Spend threshold must be a number, 0 or more";
-	if (!(Number.isInteger(v.criticalThreshold) && v.criticalThreshold >= 1))
-		return "Essential threshold must be a whole number, 1 or more";
 	return null;
 }
 
@@ -187,7 +184,6 @@ export function SupplierForm({
 			leadTimeDays: Number(str("leadTimeDays")),
 			coverDays: Number(str("coverDays")),
 			minimumOrder: Number(str("minimumOrder").replace(/[$,\s]/g, "") || 0),
-			criticalThreshold: Number(str("criticalThreshold")),
 		};
 		const saved: Supplier = { ...s, ...values };
 		const refused = refusal(saved);
@@ -336,7 +332,10 @@ export function SupplierForm({
 							/>
 						</Adorned>
 					</Field>
-					<Field label="Spend threshold" hint="A suggestion is ready at this">
+					<Field
+						label="Spend threshold"
+						hint="Ready at this. Under it, shown once waiting loses profit"
+					>
 						<Adorned before="$">
 							<input
 								name="minimumOrder"
@@ -346,17 +345,6 @@ export function SupplierForm({
 								className={cn(box, "pl-5 tabular-nums")}
 							/>
 						</Adorned>
-					</Field>
-					<Field label="Essential threshold">
-						<Tip content="Essentials needing order that suggest a PO whatever its total. Twice as many: Order soon">
-							<input
-								name="criticalThreshold"
-								required
-								inputMode="numeric"
-								defaultValue={s.criticalThreshold}
-								className={cn(box, "tabular-nums")}
-							/>
-						</Tip>
 					</Field>
 				</Section>
 

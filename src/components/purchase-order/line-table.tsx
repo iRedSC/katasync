@@ -33,6 +33,7 @@ const LINE_COLUMNS = {
 	qty: { label: "Qty", ...NUMBER },
 	onhand: { label: "On hand", ...NUMBER },
 	velocity: { label: "Velocity", ...NUMBER },
+	priority: { label: "Priority", ...NUMBER },
 	cost: { label: "Cost", ...NUMBER },
 	amount: { label: "Amount", ...NUMBER },
 	received: { label: "Received", ...NUMBER },
@@ -47,6 +48,7 @@ const lineValues = (l: Line) => ({
 	qty: l.quantity,
 	onhand: l.onHand,
 	velocity: l.why?.dailyDemand ?? null,
+	priority: l.why?.priority?.score ?? null,
 	cost: l.unitCost,
 	amount: lineCents(l, l.discounts),
 	received: l.received,
@@ -220,6 +222,13 @@ export function LineTable({
 								"Velocity",
 								"text-center",
 								"Units sold a month",
+							)}
+						{draft &&
+							header(
+								"priority",
+								"Priority",
+								"text-center",
+								"Profit a week's wait would lose",
 							)}
 						{header("cost", "Cost", "text-right")}
 						{header("amount", "Amount", "px-4 text-right")}

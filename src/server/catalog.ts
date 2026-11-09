@@ -39,7 +39,6 @@ export {
 	saveProductStockRange,
 	saveRetailReserve,
 	setAerosol,
-	setCritical,
 	setInsureWhenShipped,
 } from "#/server/catalog/product-settings";
 export {

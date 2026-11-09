@@ -1,9 +1,10 @@
 import NumberFlow from "@number-flow/react";
 import { createFileRoute, Link, type LinkProps } from "@tanstack/react-router";
 import { Badge, Card, Page } from "#/components/page";
+import { PriorityScore } from "#/components/priority-score";
 import { ProductImage, ProductName } from "#/components/product";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
-import { formatCount } from "#/lib/format";
+import { formatCount, formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { statusSearch } from "#/products/views";
 import { getDashboard } from "#/server/catalog";
@@ -75,7 +76,7 @@ function Home() {
 			<div className="grid gap-4 lg:grid-cols-2">
 				{d.atRisk.length > 0 && (
 					<Card
-						title={`${formatCount(d.atRisk.length)} A ${d.atRisk.length === 1 ? "item" : "items"} running out`}
+						title={`${formatMoney(d.atRisk.reduce((n, r) => n + r.priority.atRisk, 0))} a week at risk`}
 						aside={
 							<Link to="/purchasing" className="text-link hover:underline">
 								Purchase orders
@@ -84,16 +85,17 @@ function Home() {
 						flush
 					>
 						<p className="px-4 pb-2 text-muted-foreground">
-							Out before a new PO could arrive, even with what's on order.
+							Profit lost if these wait a week to be ordered.
 						</p>
 						<ul>
 							{d.atRisk.slice(0, 6).map((r) => (
 								<ProductRow key={r.sku} {...r}>
-									<Badge tone={r.daysLeft === 0 ? "critical" : "warning"}>
-										{r.daysLeft === 0
-											? "Out now"
-											: `${r.daysLeft} ${r.daysLeft === 1 ? "day" : "days"} left`}
-									</Badge>
+									<span className="flex items-center gap-3">
+										<span className="font-semibold text-critical-text tabular-nums">
+											{formatMoney(r.priority.atRisk)}
+										</span>
+										<PriorityScore priority={r.priority} />
+									</span>
 								</ProductRow>
 							))}
 						</ul>

@@ -9,7 +9,7 @@ import {
 } from "#/purchasing/forecast";
 
 // Everything reorder reads besides stock: each product's forecast, each
-// supplier's lead time, and the classes that say what's critical. Load it
+// supplier's lead time, and the classes that say what orders itself. Load it
 // once and pass it around when several things need it.
 export type Plan = {
 	forecasts: Map<number, Forecast>;

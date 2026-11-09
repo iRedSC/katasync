@@ -4,7 +4,7 @@ import { getDb } from "#/db/client";
 import { products, stockLevels } from "#/db/schema";
 import { getBundleBlockers } from "#/inventory/availability";
 import { onlineStock } from "#/inventory/online-stock";
-import { aItemsAtRisk } from "#/purchasing/reorder";
+import { losingProfit } from "#/purchasing/reorder";
 
 // Home shows only what needs someone. Stock totals are deliberately absent:
 // nobody acts on them.
@@ -30,7 +30,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(
 				.select({ bundles: sql<number>`count(*)::int` })
 				.from(products)
 				.where(eq(products.kind, "bundle")),
-			aItemsAtRisk(db),
+			losingProfit(db),
 		]);
 
 		const top = blockers.slice(0, 6);

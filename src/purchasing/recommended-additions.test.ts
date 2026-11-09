@@ -58,11 +58,6 @@ describe("recommendedAdditions", () => {
 				.update(schema.products)
 				.set({ minStock: 10, maxStock: 40 })
 				.where(eq(schema.products.id, id));
-		await db
-			.update(schema.products)
-			.set({ critical: true })
-			.where(eq(schema.products.id, now_));
-
 		const r = await recommendedAdditions(
 			db,
 			canam,
@@ -70,12 +65,12 @@ describe("recommendedAdditions", () => {
 			DEFAULT_SETTINGS,
 			now,
 		);
-		// The leader makes these C items. Each one's target is the 20 sold in
-		// the cover days; SOON and LATER top up to their max of 40. NOW is
-		// marked critical, so it's a suggestion instead; FAR lasts past cover.
-		expect(r.map((l) => [l.sku, l.due, l.quantity, l.critical])).toEqual([
-			["SOON", 3, 17, false],
-			["LATER", 10, 10, false],
+		// Each one's target is the 20 sold in the cover days; SOON and LATER
+		// top up to their max of 40. NOW needs ordering today and earns enough
+		// to go on the PO by itself, so it isn't here; FAR lasts past cover.
+		expect(r.map((l) => [l.sku, l.due, l.quantity])).toEqual([
+			["SOON", 3, 17],
+			["LATER", 10, 10],
 		]);
 	});
 
