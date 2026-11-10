@@ -69,3 +69,56 @@ test("an Amazon order refunded in full stops needing shipping, though Amazon sti
 		needsShipping: false,
 	});
 });
+
+test("an order whose every line was refunded or removed stops needing shipping, though Shopify still says unfulfilled and paid", async () => {
+	const db = await createTestDb();
+	const [{ id: storeId }] = await db
+		.insert(schema.stores)
+		.values({ channel: "shopify", name: "Online Store" })
+		.returning();
+	const [{ id: orderId }] = await db
+		.insert(schema.orders)
+		.values({
+			storeId,
+			externalId: "gid://shopify/Order/1",
+			name: "#1",
+			placedAt: new Date(),
+			fulfillmentStatus: "UNFULFILLED",
+			financialStatus: "PAID",
+			total: 30,
+			sourceUpdatedAt: new Date(),
+		})
+		.returning();
+	const lines = await db
+		.insert(schema.orderLines)
+		.values(
+			["A", "B"].map((sku) => ({
+				orderId,
+				externalId: `line-${sku}`,
+				sku,
+				title: sku,
+				quantity: 1,
+				shippedQuantity: 0,
+				unitPrice: 15,
+			})),
+		)
+		.returning();
+	const read = async () =>
+		(
+			await db
+				.select({ needsShipping })
+				.from(schema.orders)
+				.where(eq(schema.orders.id, orderId))
+		)[0].needsShipping;
+	const empty = (id: number) =>
+		db
+			.update(schema.orderLines)
+			.set({ quantity: 0 })
+			.where(eq(schema.orderLines.id, id));
+
+	expect(await read()).toBe(true);
+	await empty(lines[0].id);
+	expect(await read()).toBe(true);
+	await empty(lines[1].id);
+	expect(await read()).toBe(false);
+});

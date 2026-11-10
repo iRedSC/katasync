@@ -288,6 +288,8 @@ describe("with a database", () => {
 	test("pins go to orders to ship and come back once shipped", async () => {
 		const open = await addOrder("#1");
 		const cancelled = await addOrder("#2", { cancelledAt: new Date() });
+		await addLine(open, null);
+		await addLine(cancelled, null);
 		expect(await assignOrderPins(db)).toBe(1);
 
 		const pinOf = async (id: number) =>
@@ -353,7 +355,7 @@ describe("with a database", () => {
 	});
 
 	test("pins stay one digit until those run out", async () => {
-		for (let i = 1; i <= 10; i++) await addOrder(`#${i}`);
+		for (let i = 1; i <= 10; i++) await addLine(await addOrder(`#${i}`), null);
 		await assignOrderPins(db);
 		const pins = (
 			await db.select({ pin: schema.orders.pin }).from(schema.orders)
@@ -462,7 +464,11 @@ describe("with a database", () => {
 		await db.update(schema.stores).set({ channel: "ebay" });
 		const canada = { ...address, shipCountry: "CA" };
 		const a = await addOrder("#1", { ...canada, shipPostalCode: "K1A 0B1" });
-		await addOrder("#2", { ...canada, shipPostalCode: "k1a0b1" });
+		await addLine(a, null);
+		await addLine(
+			await addOrder("#2", { ...canada, shipPostalCode: "k1a0b1" }),
+			null,
+		);
 		expect(
 			(await companionsOf(db, await candidate(a, "ebay"))).map((c) => c.name),
 		).toEqual(["#2"]);
