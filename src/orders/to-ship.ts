@@ -31,13 +31,21 @@ export const financialStatus = sql<string | null>`(case
 end)`;
 
 // The one definition of "someone still has to ship this": not cancelled, not
-// refunded or voided, not fully fulfilled, and not waiting on payment.
-// Shopify's own "unfulfilled" filter also counts cancelled and refunded
-// orders, so it can't be used as-is.
+// refunded or voided, not fully fulfilled, not waiting on payment, and some
+// line still has a unit on it. Shopify's own "unfulfilled" filter also
+// counts cancelled and refunded orders, so it can't be used as-is. The line
+// check catches every other way an order empties out: Shopify leaves an
+// order UNFULFILLED and PAID when each line is refunded or edited away, and
+// its lines drop to 0. It reads quantity, not shipped_quantity: a void
+// reopens units before the next sync clears the stale shipped count.
 export const needsShipping = sql<boolean>`(
 	${orders.cancelledAt} is null
 	and ${orders.fulfillmentStatus} not in ('FULFILLED', 'FULFILLMENT_NOT_REQUIRED', 'RESTOCKED', 'AWAITING_PAYMENT')
 	and coalesce(${financialStatus}, '') not in ('REFUNDED', 'VOIDED')
+	and exists (
+		select 1 from ${orderLines} l
+		where l.order_id = "orders"."id" and l.quantity > 0
+	)
 )`;
 
 // Still to ship, from our own shelf: everything that gets a pin, a label,
