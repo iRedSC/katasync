@@ -3672,49 +3672,18 @@ export const mailboxChecks = pgTable(
 
 // A picture or file sent with a buyer message. kind is eBay's (IMAGE, PDF,
 // DOC, TXT), TikTok's (IMAGE, VIDEO), or, for an Amazon email's file, image
-// when it's a picture. On one of ours, fileId is the buyer_reply_files row it
-// was sent from, and externalId the marketplace's own message for it when
-// it went as a message of its own (TikTok sends each picture apart).
+// when it's a picture. Ones katasync sent before may still carry the fileId
+// and externalId they were sent with; nothing reads them.
 export type BuyerMedia = {
 	kind: string;
 	name: string;
 	url: string;
-	fileId?: number;
-	externalId?: string;
 };
 
-// A file staff attached to a reply, uploaded before the reply is sent so
-// every try sends the same bytes. shareToken names it at a public address
-// for a marketplace that fetches files itself (eBay); tiktokImage is
-// TikTok's copy once uploaded there, so a picture goes up once.
-export const buyerReplyFiles = pgTable(
-	"buyer_reply_files",
-	{
-		id: integer().primaryKey().generatedAlwaysAsIdentity(),
-		filename: text().notNull(),
-		contentType: text().notNull(),
-		size: integer().notNull(),
-		data: bytea().notNull(),
-		shareToken: text().notNull(),
-		tiktokImage: jsonb().$type<{
-			url: string;
-			width: number;
-			height: number;
-		}>(),
-		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-	},
-	(t) => [
-		uniqueIndex("buyer_reply_files_share_token").on(t.shareToken),
-		check("buyer_reply_files_size", sql`${t.size} <= 4500000`),
-	],
-);
-
-// Where a reply we wrote stands (src/buyers/states.ts). sending: written,
-// handed to the marketplace (or Resend) or about to be, outcome not known
-// yet. sent: Resend took it (Amazon replies only), not yet Amazon's server.
-// delivered: the marketplace has it. failed: it didn't go, and why.
-// unconfirmed: no answer came and katasync can't tell whether it went, so
-// someone has to look before sending it again.
+// Where a reply of ours stands (src/buyers/states.ts). Replies read back
+// from a marketplace are delivered; the rest are from when katasync sent
+// them itself: sending (outcome never known), sent (Resend took it),
+// failed (it didn't go, and why), unconfirmed (no one could tell).
 export const buyerReplyStatus = pgEnum("buyer_reply_status", [
 	"sending",
 	"sent",
@@ -3765,9 +3734,8 @@ export const buyerMessages = pgTable(
 			.notNull()
 			.references(() => buyerThreads.id),
 		fromBuyer: boolean().notNull(),
-		// The marketplace's ID: the email's Message-ID or eBay's message ID
-		// for theirs; Resend's email ID or eBay's message ID for ours once
-		// sent. Reading one twice keeps one row.
+		// The marketplace's ID: the email's Message-ID, or eBay's or
+		// TikTok's message ID. Reading one twice keeps one row.
 		externalId: text(),
 		body: text().notNull(),
 		at: timestamp({ withTimezone: true }).notNull(),
@@ -3776,24 +3744,10 @@ export const buyerMessages = pgTable(
 		// Pictures and files sent with it: eBay's, where eBay hosts them;
 		// an Amazon email's, as kept with the email.
 		media: jsonb().$type<BuyerMedia[]>().notNull().default([]),
-		// The Message-ID an Amazon reply answers, fixed when it's written so
-		// every try sends the same email under its request key.
-		inReplyTo: text(),
-		// The address a Shopify reply goes to, fixed when it's written so
-		// every try sends it to the same buyer, whatever the order says later.
-		// Null on one kept before it was: never sent again, only checked.
-		recipient: text(),
-		// Amazon's notice that it didn't pass this reply on; each notice
-		// fails one reply at most.
-		refusedBy: integer().references(() => marketEmails.id),
-		// The buyer's language (ISO 639-1, e.g. es) and their words in
-		// English when it isn't English, read by src/ai. Null until read.
-		language: text(),
-		english: text(),
 		// Ours only, from here down.
 		status: buyerReplyStatus(),
-		// Sent with every try, so a retry never sends it twice (Resend's
-		// Idempotency-Key).
+		// Each of ours has one; the ones katasync sent used it so a retry
+		// never sent twice.
 		requestKey: uuid(),
 		error: text(),
 		statusAt: timestamp({ withTimezone: true }),
@@ -3808,13 +3762,7 @@ export const buyerMessages = pgTable(
 		uniqueIndex("buyer_messages_market_email")
 			.on(t.marketEmailId)
 			.where(sql`${t.marketEmailId} is not null`),
-		uniqueIndex("buyer_messages_refused_by")
-			.on(t.refusedBy)
-			.where(sql`${t.refusedBy} is not null`),
 		index("buyer_messages_thread_at_idx").on(t.threadId, t.at),
-		index("buyer_messages_unsettled_idx")
-			.on(t.status)
-			.where(sql`${t.status} in ('sending', 'sent', 'unconfirmed')`),
 		check(
 			"buyer_messages_status_is_ours",
 			sql`${t.fromBuyer} = (${t.status} is null)`,
@@ -3834,108 +3782,6 @@ export const buyerMessages = pgTable(
 		check(
 			"buyer_messages_failed_says_why",
 			sql`(${t.status} in ('failed', 'unconfirmed')) = (${t.error} is not null)`,
-		),
-	],
-);
-
-// A Shopify buyer's thread's reply address, marketplaces+so<token>@
-// (src/buyers/shopify-match.ts): a random token made when the thread starts,
-// so an address can't be guessed or made up, and an answer to it is filed
-// by looking it up. Kept from the query tool, like buyers' addresses.
-export const shopifyThreads = pgTable("shopify_threads", {
-	threadId: integer()
-		.primaryKey()
-		.references(() => buyerThreads.id),
-	replyToken: text().notNull().unique(),
-});
-
-// How a first message to an eBay buyer stands. It's what starts their
-// conversation, and eBay has no request key, so each try is written down
-// before it goes:
-//
-//   sending ──eBay gave its ID──▶ sent
-//      ├──eBay plainly said no──▶ refused
-//      └──anything else──▶ unsure (may have gone; never sent again blind)
-export const buyerChatStartStatus = pgEnum("buyer_chat_start_status", [
-	"sending",
-	"sent",
-	"refused",
-	"unsure",
-]);
-
-// One try at a first message to an eBay buyer from their order
-// (src/buyers/first-message.ts). The browser's key names the try, so asking
-// again after a lost answer reads this back instead of sending twice.
-export const buyerChatStarts = pgTable(
-	"buyer_chat_starts",
-	{
-		id: integer().primaryKey().generatedAlwaysAsIdentity(),
-		requestKey: uuid().notNull().unique(),
-		orderId: integer()
-			.notNull()
-			.references(() => orders.id),
-		body: text().notNull(),
-		status: buyerChatStartStatus().notNull().default("sending"),
-		// eBay's ID for the message, once sent.
-		messageId: text(),
-		// The conversation it started, once eBay lists it.
-		threadId: integer().references(() => buyerThreads.id),
-		error: text(),
-		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-		statusAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-	},
-	(t) => [
-		index("buyer_chat_starts_order_idx").on(t.orderId, t.createdAt),
-		check(
-			"buyer_chat_starts_sent_has_id",
-			sql`(${t.status} = 'sent') = (${t.messageId} is not null)`,
-		),
-	],
-);
-
-// What the marketplace itself put in a conversation (TikTok's): its
-// assistant's answers, its notices (a buyer asking for a person, a chat
-// timing out), and its order and shipping cards. Shown with the thread,
-// kept apart from buyer_messages so none ever counts as the buyer writing
-// or as our answer. other: a kind only the marketplace's own site shows.
-export const marketplaceMessageKind = pgEnum("marketplace_message_kind", [
-	"assistant",
-	"notice",
-	"order_card",
-	"shipping_card",
-	"other",
-]);
-
-export const buyerMarketplaceMessages = pgTable(
-	"buyer_marketplace_messages",
-	{
-		id: integer().primaryKey().generatedAlwaysAsIdentity(),
-		threadId: integer()
-			.notNull()
-			.references(() => buyerThreads.id),
-		externalId: text().notNull(),
-		kind: marketplaceMessageKind().notNull(),
-		body: text().notNull().default(""),
-		// The marketplace's order ID (cards), and its package (shipping).
-		orderRef: text(),
-		packageRef: text(),
-		at: timestamp({ withTimezone: true }).notNull(),
-		// As on buyer_messages: the language, and English when it isn't.
-		language: text(),
-		english: text(),
-	},
-	(t) => [
-		uniqueIndex("buyer_marketplace_messages_thread_external_id").on(
-			t.threadId,
-			t.externalId,
-		),
-		check(
-			"buyer_marketplace_messages_card_has_order",
-			sql`(${t.kind} in ('order_card', 'shipping_card')) = (${t.orderRef} is not null)`,
-		),
-		check(
-			"buyer_marketplace_messages_words_have_body",
-			sql`${t.kind} not in ('assistant', 'notice') or ${t.body} <> ''`,
 		),
 	],
 );
@@ -4065,84 +3911,3 @@ export const buyerMessageChecks = pgTable("buyer_message_checks", {
 	error: text(),
 	erroredAt: timestamp({ withTimezone: true }),
 });
-
-// What staff have decided to do in a kind of case, for the reply agent
-// (src/ai) to follow: when a buyer says or needs this, then do that.
-export const replyPrecedents = pgTable("reply_precedents", {
-	id: integer().primaryKey().generatedAlwaysAsIdentity(),
-	// What staff call it, e.g. "Empty box".
-	name: text().notNull(),
-	when: text().notNull(),
-	// What to do then; "then" in the database.
-	action: text("then").notNull(),
-	// Who wrote it last: staff on the page, or Claude over MCP.
-	by: text().$type<"staff" | "claude">().notNull().default("staff"),
-	updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
-
-// Where a thread's suggested reply stands. drafting: the agent is writing
-// it. ready: there's one to send. failed: the agent couldn't, and why.
-export const replyDraftState = pgEnum("reply_draft_state", [
-	"drafting",
-	"ready",
-	"failed",
-]);
-
-// The reply suggested for a thread, one at most: written by the agent, or
-// edited by staff or Claude. Sending a reply uses it up.
-export const replyDrafts = pgTable(
-	"reply_drafts",
-	{
-		threadId: integer()
-			.primaryKey()
-			.references(() => buyerThreads.id),
-		state: replyDraftState().notNull(),
-		// What would be sent, in the buyer's language.
-		body: text(),
-		// The same in English, when the buyer's language isn't.
-		english: text(),
-		// The buyer's latest message when it was written: a newer one means
-		// it's out of date and drafted again.
-		forMessageId: integer().references(() => buyerMessages.id),
-		// The order it was written about (the marketplace's ID), when that
-		// isn't the thread's own: a buyer's one conversation can be opened
-		// from any of their orders. Null is the thread's.
-		orderRef: text(),
-		by: text().$type<"ai" | "staff" | "claude">().notNull(),
-		// The precedents it followed.
-		precedentIds: integer().array().notNull().default(sql`'{}'::integer[]`),
-		// What the agent says staff should check before sending.
-		note: text(),
-		error: text(),
-		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-	},
-	(t) => [
-		check(
-			"reply_drafts_ready_has_body",
-			sql`${t.state} <> 'ready' or ${t.body} is not null`,
-		),
-		check(
-			"reply_drafts_failed_says_why",
-			sql`(${t.state} = 'failed') = (${t.error} is not null)`,
-		),
-		check("reply_drafts_by_known", sql`${t.by} in ('ai', 'staff', 'claude')`),
-	],
-);
-
-// The reply agent's base prompt as staff wrote it: who we are, the tone,
-// the marketplace rules, how replies open and close. One row; none means
-// the default in src/ai/agents.ts. The precedents and the answer's shape are
-// added in code, so an edit here can't break drafting.
-export const replyBasePrompt = pgTable(
-	"reply_base_prompt",
-	{
-		id: smallint().primaryKey().default(1),
-		prompt: text().notNull(),
-		by: text().$type<"staff" | "claude">().notNull().default("staff"),
-		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-	},
-	(t) => [
-		check("reply_base_prompt_one_row", sql`${t.id} = 1`),
-		check("reply_base_prompt_by_known", sql`${t.by} in ('staff', 'claude')`),
-	],
-);

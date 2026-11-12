@@ -1,9 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { createFileRoute } from "@tanstack/react-router";
 
-// Every five minutes (vercel.json), reads buyers' messages in and settles
-// replies still in flight (src/buyers/run.ts). With ?sweep=1, every four
-// hours, eBay's are read two weeks back for anything a run missed.
+// Every five minutes (vercel.json), reads buyers' messages in, to count
+// those waiting on us (src/buyers/run.ts). With ?sweep=1, every four hours,
+// eBay's and TikTok's are read two weeks back for anything a run missed.
 // Signed with `Authorization: Bearer $CRON_SECRET`.
 
 function fromVercel(request: Request) {

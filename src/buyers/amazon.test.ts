@@ -1,26 +1,22 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
-import { buyerMessages, marketEmails, orders, stores } from "#/db/schema";
+import {
+	buyerMessages,
+	buyerThreads,
+	marketEmails,
+	orders,
+	stores,
+} from "#/db/schema";
 import { createTestDb } from "#/test/db";
+import { parseCopy, parseRelayed, threadAmazonMail } from "./amazon-mail";
 import {
-	applyAmazonRefusals,
-	parseCopy,
-	parseRelayed,
-	threadAmazonMail,
-} from "./amazon-mail";
-import { refuseFiles } from "./attachments";
-import { addReplyFile } from "./reply-files";
-import { reply, settleReplies } from "./send";
-import { settleReply } from "./states";
-import {
+	clearWaiting,
 	countWaiting,
+	countWaitingByMarket,
 	ensureThread,
-	logOurs,
 	recordFromBuyer,
 	setThreadDone,
-	threadsPage,
-	waitingOn,
-	waitingThreads,
+	unclearThreads,
 } from "./threads";
 
 const RELAY =
@@ -52,14 +48,7 @@ let db: Db;
 let n = 0;
 beforeEach(async () => {
 	db = await createTestDb();
-	vi.stubEnv("RESEND_API_KEY", "re_test");
-	vi.stubEnv("MARKETPLACE_INBOX", "marketplaces@eastcoastdrywall.com");
 });
-afterEach(() => {
-	vi.unstubAllEnvs();
-	vi.unstubAllGlobals();
-});
-
 async function email(over: Partial<typeof marketEmails.$inferInsert> = {}) {
 	n++;
 	const [row] = await db
@@ -82,21 +71,15 @@ async function email(over: Partial<typeof marketEmails.$inferInsert> = {}) {
 	return row;
 }
 
-const resend = (answers: Response[]) => {
-	const calls: { url: string; init?: RequestInit }[] = [];
-	vi.stubGlobal(
-		"fetch",
-		vi.fn(async (url: string, init?: RequestInit) => {
-			calls.push({ url, init });
-			const next = answers.shift();
-			if (!next) throw new Error(`Unexpected fetch ${url}`);
-			return next;
-		}),
-	);
-	return calls;
-};
-const json = (status: number, body: unknown) =>
-	new Response(JSON.stringify(body), { status });
+// Every message kept, oldest first: the start of its words, and whether the
+// buyer wrote it.
+const bodies = async () =>
+	(
+		await db
+			.select()
+			.from(buyerMessages)
+			.orderBy(buyerMessages.at, buyerMessages.id)
+	).map((m) => [m.body.slice(0, 12), m.fromBuyer]);
 
 describe("Amazon's relayed emails", () => {
 	test("reads the buyer, the order, and only their words", () => {
@@ -137,44 +120,23 @@ describe("Amazon's relayed emails", () => {
 		await email({ fromAddress: "seller-notification@amazon.com" });
 		expect(await threadAmazonMail(db)).toBe(1);
 
-		const [thread, ...others] = await threadsPage(db, "open", null);
+		const [thread, ...others] = await db.select().from(buyerThreads);
 		expect(others).toEqual([]);
 		expect(thread).toMatchObject({
 			market: "amazon",
 			buyerName: "Rick",
-			orderId: order?.id,
-			waiting: {
-				since: new Date(Date.UTC(2026, 9, 22, 16, n - 2)),
-				due: new Date(Date.UTC(2026, 9, 23, 16, n - 2)),
-			},
+			orderRef: order?.externalId,
 		});
-		expect(thread?.messages.map((m) => m.body.slice(0, 12))).toEqual([
-			"The shipping",
-			"Hello?",
+		expect(await bodies()).toEqual([
+			["The shipping", true],
+			["Hello?", true],
 		]);
+		expect(await countWaiting(db, "amazon")).toBe(1);
 	});
 });
 
-describe("answering", () => {
-	test("waits on us until a reply that didn't fail", () => {
-		const at = (h: number) => new Date(Date.UTC(2026, 0, 1, h));
-		const theirs = { fromBuyer: true, status: null };
-		expect(
-			waitingOn("amazon", [
-				{ ...theirs, at: at(1) },
-				{ fromBuyer: false, status: "failed", at: at(2) },
-				{ ...theirs, at: at(3) },
-			])?.since,
-		).toEqual(at(1));
-		expect(
-			waitingOn("amazon", [
-				{ ...theirs, at: at(1) },
-				{ fromBuyer: false, status: "sending", at: at(2) },
-			]),
-		).toBeNull();
-	});
-
-	test("the side list and drafting see the same threads waiting as the page", async () => {
+describe("waiting on us", () => {
+	test("until a reply that answers: not one that failed or may not have gone", async () => {
 		const at = (h: number) => new Date(Date.UTC(2026, 0, 1, h));
 		const statuses = [
 			null,
@@ -232,288 +194,77 @@ describe("answering", () => {
 			at: at(1),
 		});
 		await setThreadDone(db, done.id, true);
-		for (const market of [null, "amazon", "ebay"] as const) {
-			const page = (await threadsPage(db, "open", market)).filter(
-				(t) => t.waiting,
-			);
-			expect(await countWaiting(db, market)).toBe(page.length);
-			const sql = await waitingThreads(db, market);
-			expect(
-				sql.map((t) => [t.id, t.due]).sort(([a], [b]) => Number(a) - Number(b)),
-			).toEqual(
-				page
-					.map((t) => [t.id, t.waiting?.due])
-					.sort(([a], [b]) => Number(a) - Number(b)),
-			);
-		}
-		expect(await countWaiting(db, null)).toBeGreaterThan(0);
-	});
-
-	test("a reply goes to the buyer's address, then settles delivered", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const calls = resend([json(200, { id: "re_1" })]);
-		const r = await reply(
-			db,
-			thread?.id ?? 0,
-			"  Sending another today.  ",
-			crypto.randomUUID(),
-		);
-		expect(r.status).toBe("sent");
-		const sent = JSON.parse(String(calls[0]?.init?.body));
-		expect(sent).toMatchObject({
-			from: "marketplaces@eastcoastdrywall.com",
-			to: [RELAY],
-			subject: `Re: ${SUBJECT}`,
-			text: "Sending another today.",
-			headers: { "In-Reply-To": `<m${n}@amazon>` },
+		// Per market: no reply, a failed one, or an unconfirmed one wait in all
+		// three places (9); an answering one only when the buyer wrote again
+		// after it (3).
+		expect(await countWaitingByMarket(db)).toEqual({
+			amazon: 12,
+			ebay: 12,
+			tiktok: 0,
 		});
-
-		resend([json(200, { last_event: "delivered" })]);
-		await settleReplies(db);
-		const [after] = await threadsPage(db, "open", null);
-		expect(after?.messages.at(-1)?.status).toBe("delivered");
-		expect(after?.waiting).toBeNull();
+		expect(await countWaiting(db, null)).toBe(24);
+		expect(await countWaiting(db, "ebay")).toBe(12);
 	});
 
-	test("files go with the email, and only kinds Amazon takes", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const pdf = await addReplyFile(db, {
-			filename: "label.pdf",
-			contentType: "application/pdf",
-			data: new TextEncoder().encode("%PDF-1"),
+	test("a new message from the buyer counts a done thread again", async () => {
+		const t = await ensureThread(db, {
+			market: "tiktok",
+			externalId: "c1",
+			subject: "Chat",
 		});
-		const word = await addReplyFile(db, {
-			filename: "note.doc",
-			contentType: "application/msword",
-			data: new Uint8Array([1]),
+		await recordFromBuyer(db, t.id, {
+			externalId: "1",
+			body: "Hi",
+			at: new Date(),
 		});
-		await expect(
-			reply(db, thread?.id ?? 0, "", crypto.randomUUID(), [word.id]),
-		).rejects.toThrow(/Takes PDF, JPG, PNG/);
-		const calls = resend([json(200, { id: "re_2" })]);
-		const r = await reply(db, thread?.id ?? 0, "", crypto.randomUUID(), [
-			pdf.id,
-		]);
-		expect(r.status).toBe("sent");
-		expect(JSON.parse(String(calls[0]?.init?.body)).attachments).toEqual([
-			{
-				filename: "label.pdf",
-				content: Buffer.from("%PDF-1").toString("base64"),
-			},
-		]);
-		const [after] = await threadsPage(db, "open", null);
-		expect(after?.messages.at(-1)?.media).toEqual([
-			{
-				kind: "PDF",
-				name: "label.pdf",
-				url: `/api/buyer-files/${pdf.id}`,
-				fileId: pdf.id,
-			},
-		]);
-		// Sending it again, or undo putting it back in a box, counts its real
-		// size: with one there already, the two can be too much together.
-		const files = after?.messages.at(-1)?.files ?? [];
-		expect(files).toEqual([
-			{
-				kind: "PDF",
-				name: "label.pdf",
-				type: "application/pdf",
-				size: 6,
-				url: `/api/buyer-files/${pdf.id}`,
-				fileId: pdf.id,
-			},
-		]);
-		const inBox = [3_500_000, 3_499_995].map((size, i) => ({
-			name: `${i}.pdf`,
-			type: "application/pdf",
-			size,
-		}));
-		expect(refuseFiles("amazon", [...inBox, ...files])).toBe(
-			"7 MB of files at most",
-		);
-	});
-
-	test("an unsure send is tried again with the same key; a refused one fails", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const calls = resend([json(500, { message: "down" })]);
-		expect(
-			(await reply(db, thread?.id ?? 0, "One", crypto.randomUUID())).status,
-		).toBe("sending");
-
-		const retry = resend([json(200, { id: "re_2" })]);
-		// Not while the first request may still be going.
-		await settleReplies(db);
-		expect(retry).toEqual([]);
-		await settleReplies(db, Date.now() + 120_000);
-		const key = (c: (typeof calls)[number] | undefined) =>
-			new Headers(c?.init?.headers).get("Idempotency-Key");
-		expect(key(retry[0])).toBe(key(calls[0]));
-		const [after] = await threadsPage(db, "open", null);
-		expect(after?.messages.at(-1)?.status).toBe("sent");
-
-		resend([json(422, { message: "Invalid `to` field" })]);
-		const r = await reply(db, thread?.id ?? 0, "Two", crypto.randomUUID());
-		expect(r.status).toBe("failed");
-		const [last] =
-			(await threadsPage(db, "open", null))[0]?.messages.slice(-1) ?? [];
-		expect(last?.error).toBe("Resend answered 422: Invalid `to` field");
-	});
-
-	test("Amazon refusing a delivered reply fails it; a package notice doesn't", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [thread] = await threadsPage(db, "open", null);
-		resend([json(200, { id: "re_3" })]);
-		const r = await reply(db, thread?.id ?? 0, "Hi", crypto.randomUUID());
-		await settleReply(db, r.id, { kind: "delivered" });
-		const later = new Date(Date.now() + 60_000);
-		await email({
-			fromAddress: "seller-notification@amazon.com",
-			subject: "Package could not be delivered",
-			body: `Order 113-1228890-8225003`,
-			receivedAt: later,
+		await setThreadDone(db, t.id, true);
+		expect(await countWaiting(db, "tiktok")).toBe(0);
+		await recordFromBuyer(db, t.id, {
+			externalId: "2",
+			body: "Hello?",
+			at: new Date(),
 		});
-		expect(await applyAmazonRefusals(db)).toBe(0);
-		// Vouched for, but from a domain that only starts with Amazon's.
-		await email({
-			fromAddress: "seller-notification@amazon.com.attacker.com",
-			subject: "Your message could not be delivered",
-			body: `To ${RELAY}`,
-			receivedAt: later,
-		});
-		expect(await applyAmazonRefusals(db)).toBe(0);
-		await email({
-			fromAddress: "seller-notification@amazon.com",
-			subject: "Your message could not be delivered",
-			body: `To ${RELAY}`,
-			receivedAt: later,
-		});
-		expect(await applyAmazonRefusals(db)).toBe(1);
-		expect(await applyAmazonRefusals(db)).toBe(0);
+		expect(await countWaiting(db, "tiktok")).toBe(1);
 	});
 
-	test("a notice fails one reply, once; with two out it can't tell which", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const id = thread?.id ?? 0;
-		const later = new Date(Date.now() + 60_000);
-		const notice = () =>
-			email({
-				fromAddress: "seller-notification@amazon.com",
-				subject: "Your message could not be delivered",
-				body: `To ${RELAY}`,
-				receivedAt: later,
-			});
-		resend([json(200, { id: "re_a" }), json(200, { id: "re_b" })]);
-		const a = await reply(db, id, "A", crypto.randomUUID());
-		await notice();
-		expect(await applyAmazonRefusals(db)).toBe(1);
-		const b = await reply(db, id, "B", crypto.randomUUID());
-		await settleReply(db, b.id, { kind: "delivered" });
-		// The used notice doesn't go on to the next reply.
-		expect(await applyAmazonRefusals(db)).toBe(0);
-		resend([json(200, { id: "re_c" })]);
-		const c = await reply(db, id, "C", crypto.randomUUID());
-		await notice();
-		// B and C are both out: which one it's about is a guess, so neither.
-		expect(await applyAmazonRefusals(db)).toBe(0);
-		const statuses = (await threadsPage(db, "open", null))[0]?.messages
-			.filter((m) => !m.fromBuyer)
-			.map((m) => [m.id, m.status]);
-		expect(statuses).toEqual([
-			[a.id, "failed"],
-			[b.id, "delivered"],
-			[c.id, "sent"],
-		]);
-	});
-
-	test("Resend's events: suppressed never went; an unknown one is reported", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [thread] = await threadsPage(db, "open", null);
-		resend([json(200, { id: "re_s" }), json(200, { id: "re_u" })]);
-		await reply(db, thread?.id ?? 0, "One", crypto.randomUUID());
-		await reply(db, thread?.id ?? 0, "Two", crypto.randomUUID());
-		resend([
-			json(200, { last_event: "suppressed" }),
-			json(200, { last_event: "teleported" }),
-		]);
-		const r = await settleReplies(db);
-		expect(r.problems).toEqual(["Resend says teleported of reply re_u"]);
-		const statuses = (await threadsPage(db, "open", null))[0]?.messages
-			.filter((m) => !m.fromBuyer)
-			.map((m) => m.status);
-		expect(statuses).toEqual(["failed", "sent"]);
-	});
-
-	test("an answer that doesn't read leaves it sending, and every try is the same email", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const first = resend([
-			new Response("<html>gateway</html>", { status: 200 }),
-		]);
-		expect(
-			(await reply(db, thread?.id ?? 0, "Hi", crypto.randomUUID())).status,
-		).toBe("sending");
-		// The buyer writes again before the retry.
-		await email({ body: "Hello?" });
-		await threadAmazonMail(db);
-		const retry = resend([json(200, { id: "re_r" })]);
-		await settleReplies(db, Date.now() + 120_000);
-		expect(retry[0]?.init?.body).toBe(first[0]?.init?.body);
-	});
-
-	test("a day without an answer is unconfirmed, not failed", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [thread] = await threadsPage(db, "open", null);
-		resend([json(503, {})]);
-		await reply(db, thread?.id ?? 0, "Hi", crypto.randomUUID());
-		resend([]);
-		await settleReplies(db, Date.now() + 24 * 3_600_000);
-		const [after] = await threadsPage(db, "open", null);
-		expect(after?.messages.at(-1)).toMatchObject({
-			status: "unconfirmed",
-			error: expect.stringMatching(/Seller Central/),
-		});
-		// It may not have gone, so the buyer still waits on us.
-		expect(after?.waiting).not.toBeNull();
-	});
-
-	test("a status moves only from where its event follows", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [thread] = await threadsPage(db, "open", null);
-		resend([json(200, { id: "re_4" })]);
-		const r = await reply(db, thread?.id ?? 0, "Hi", crypto.randomUUID());
-		expect(await settleReply(db, r.id, { kind: "delivered" })).toBe(true);
-		// Late and repeated events change nothing.
-		expect(
-			await settleReply(db, r.id, { kind: "accepted", externalId: "x" }),
-		).toBe(false);
-		expect(
-			await settleReply(db, r.id, { kind: "unconfirmed", error: "not found" }),
-		).toBe(false);
-		// The database refuses a reply marked gone with no ID.
-		await expect(
-			db.insert(buyerMessages).values({
-				threadId: thread?.id ?? 0,
-				fromBuyer: false,
-				body: "x",
+	test("clearing a marketplace takes only its waiting threads, and undoes", async () => {
+		const waiting = async (market: "ebay" | "tiktok", id: string) => {
+			const t = await ensureThread(db, { market, externalId: id, subject: id });
+			await recordFromBuyer(db, t.id, {
+				externalId: id,
+				body: "Thanks!",
 				at: new Date(),
-				status: "delivered",
-				requestKey: crypto.randomUUID(),
-				statusAt: new Date(),
-			}),
-		).rejects.toThrow();
+			});
+			return t;
+		};
+		const a = await waiting("ebay", "e1");
+		const b = await waiting("ebay", "e2");
+		await waiting("tiktok", "t1");
+		await setThreadDone(db, b.id, true);
+		const cleared = await clearWaiting(db, "ebay");
+		expect(cleared).toEqual([a.id]);
+		expect(await countWaitingByMarket(db)).toEqual({
+			amazon: 0,
+			ebay: 0,
+			tiktok: 1,
+		});
+		await unclearThreads(db, cleared);
+		expect(await countWaiting(db, "ebay")).toBe(1);
+	});
+
+	test("Shopify's threads aren't counted: their buyers aren't read anymore", async () => {
+		const t = await ensureThread(db, {
+			market: "shopify",
+			externalId: "o1",
+			subject: "Your order",
+		});
+		await recordFromBuyer(db, t.id, {
+			externalId: "1",
+			body: "Hi",
+			at: new Date(),
+		});
+		expect(await countWaiting(db, null)).toBe(0);
+		expect(await countWaiting(db, "shopify")).toBe(0);
 	});
 });
 
@@ -542,11 +293,6 @@ const copy = () =>
 		subject: "Your e-mail to Rick",
 		body: COPY,
 	});
-const bodies = async () =>
-	(await threadsPage(db, "open", null))[0]?.messages.map((m) => [
-		m.body.slice(0, 12),
-		m.fromBuyer,
-	]);
 
 describe("sent in Seller Central", () => {
 	// Just after the copy arrived, so it's read as recent and words added
@@ -576,42 +322,7 @@ describe("sent in Seller Central", () => {
 			["The shipping", true],
 			["I believe th", false],
 		]);
-		expect((await threadsPage(db, "open", null))[0]?.waiting).toBeNull();
-	});
-
-	test("it takes the place of the same words added without sending", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [t] = await threadsPage(db, "open", null);
-		await logOurs(db, t?.id ?? 0, COPIED, crypto.randomUUID());
-		await copy();
-		await threadAmazonMail(db);
-		expect(await bodies()).toEqual([
-			["The shipping", true],
-			["I believe th", false],
-		]);
-		const [ours] =
-			(await threadsPage(db, "open", null))[0]?.messages.slice(1) ?? [];
-		expect(ours?.logged).toBe(false);
-	});
-
-	test("one sent from here isn't doubled by a copy of it", async () => {
-		await email();
-		await threadAmazonMail(db);
-		const [t] = await threadsPage(db, "open", null);
-		await db.insert(buyerMessages).values({
-			threadId: t?.id ?? 0,
-			fromBuyer: false,
-			body: COPIED,
-			externalId: "resend-1",
-			at: new Date(Date.UTC(2026, 9, 22, 17)),
-			status: "delivered",
-			requestKey: crypto.randomUUID(),
-			statusAt: new Date(),
-		});
-		await copy();
-		expect(await threadAmazonMail(db)).toBe(0);
-		expect(await bodies()).toHaveLength(2);
+		expect(await countWaiting(db, "amazon")).toBe(0);
 	});
 
 	test("a copy for an order with no thread waits for one", async () => {

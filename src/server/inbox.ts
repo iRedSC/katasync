@@ -116,7 +116,8 @@ export const inboxCounts = createServerFn({ method: "GET" })
 				)
 				.groupBy(marketEmails.folder),
 			countUnfiled(db),
-			countWaiting(db, data.market),
+			// Buyers aren't filtered: their folder shows every marketplace.
+			countWaiting(db, null),
 		]);
 		const [voicemails] = await db
 			.select({ count: sql<number>`count(*)::int` })

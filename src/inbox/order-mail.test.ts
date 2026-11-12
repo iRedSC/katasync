@@ -52,5 +52,4 @@ test("emails that name the order, and not ones that only contain its number", as
 		"Order #5747 placed",
 		"Return requested",
 	]);
-	expect(found.threads).toEqual([]);
 });

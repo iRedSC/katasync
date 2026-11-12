@@ -47,12 +47,8 @@ export const SECRET_TABLES = [
 	"qz_certificate",
 	"damage_photo_uploads",
 	"po_file_uploads",
-	// Each row's share_token is a public link to the file.
-	"buyer_reply_files",
 	// Buyers' email addresses.
 	"order_buyer_contacts",
-	// What files an email on a Shopify buyer's thread.
-	"shopify_threads",
 	// Signed TikTok links to buyers' photos and videos, and the photos.
 	// return_request_evidence is what's there without them.
 	"return_request_media",

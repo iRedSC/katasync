@@ -11,40 +11,12 @@ import type { MailOrders as Found } from "#/inbox/mail-orders";
 import { formatCount, formatDay } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { knownOf } from "#/orders/tracking-read";
-import { getBuyerOrder } from "#/server/buyers";
 import { getMailOrders } from "#/server/inbox";
 
-// Under the buyer's name, and above a marketplace email: what they ordered,
-// as on the orders list, and each package as the carrier tells it now.
-// Asked as the thread or email opens; until then, the order number it
-// already knows.
+// Above a marketplace email: what was ordered, as on the orders list, and
+// each package as the carrier tells it now. Asked as the email opens.
 
 type Package = Order["packages"][number];
-
-export function BuyerOrder({
-	threadId,
-	orderId,
-	fallback,
-}: {
-	threadId: number;
-	// The order the conversation was opened from, when not the thread's own.
-	orderId?: number;
-	// What shows until the order is read, and when katasync doesn't have it.
-	fallback: React.ReactNode;
-}) {
-	const [order, setOrder] = useState<Order | null | undefined>(undefined);
-	useEffect(() => {
-		let current = true;
-		getBuyerOrder({ data: { threadId, ...(orderId ? { orderId } : {}) } })
-			.then((o) => current && setOrder(o))
-			.catch(() => current && setOrder(null));
-		return () => {
-			current = false;
-		};
-	}, [threadId, orderId]);
-	if (!order) return <>{fallback}</>;
-	return <OrderStrip order={order} />;
-}
 
 // Above a marketplace email: each order it names that katasync has.
 export function MailOrders({ emailId }: { emailId: number }) {

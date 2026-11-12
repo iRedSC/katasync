@@ -9,8 +9,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { createTestDb } from "#/test/db";
-import { buyerOrder } from "./order";
-import { ensureThread } from "./threads";
+import { orderSummary } from "./order";
 
 let db: Db;
 beforeEach(async () => {
@@ -69,17 +68,11 @@ async function shippedOrder(carrier: string, url: string | null) {
 		externalId: "s1",
 		test: false,
 	});
-	const t = await ensureThread(db, {
-		market: "amazon",
-		externalId: "buyer@marketplace.amazon.com",
-		subject: "Where is it",
-		orderRef: "113-1",
-	});
-	return t.id;
+	return order?.id ?? 0;
 }
 
 test("the order's products and where each package is", async () => {
-	const threadId = await shippedOrder("USPS", null);
+	const orderId = await shippedOrder("USPS", null);
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(
@@ -96,7 +89,7 @@ test("the order's products and where each package is", async () => {
 				),
 		),
 	);
-	const o = await buyerOrder(db, threadId);
+	const o = await orderSummary(db, orderId);
 	expect(o?.lines).toMatchObject([{ title: "Corner applicator", quantity: 2 }]);
 	expect(o?.packages).toMatchObject([
 		{
@@ -117,12 +110,12 @@ test("the order's products and where each package is", async () => {
 });
 
 test("a carrier that can't be asked leaves what katasync knows", async () => {
-	const threadId = await shippedOrder("FedEx", "https://x.example/t");
+	const orderId = await shippedOrder("FedEx", "https://x.example/t");
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async () => new Response("down", { status: 503 })),
 	);
-	const [p] = (await buyerOrder(db, threadId))?.packages ?? [];
+	const [p] = (await orderSummary(db, orderId)).packages ?? [];
 	expect(p).toMatchObject({
 		url: "https://x.example/t",
 		tracking: { state: "failed", why: expect.stringContaining("503") },
@@ -130,7 +123,7 @@ test("a carrier that can't be asked leaves what katasync knows", async () => {
 });
 
 test("a refresh that fails after an answer keeps its scans, stale", async () => {
-	const threadId = await shippedOrder("USPS", null);
+	const orderId = await shippedOrder("USPS", null);
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async () =>
@@ -140,12 +133,12 @@ test("a refresh that fails after an answer keeps its scans, stale", async () => 
 			}),
 		),
 	);
-	await buyerOrder(db, threadId);
+	await orderSummary(db, orderId);
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async () => new Response("down", { status: 503 })),
 	);
-	const [p] = (await buyerOrder(db, threadId))?.packages ?? [];
+	const [p] = (await orderSummary(db, orderId)).packages ?? [];
 	expect(p?.tracking).toMatchObject({
 		state: "stale",
 		why: expect.stringContaining("503"),
@@ -154,15 +147,15 @@ test("a refresh that fails after an answer keeps its scans, stale", async () => 
 });
 
 test("a package without a number, or with a carrier Shippo can't follow", async () => {
-	const threadId = await shippedOrder("DHL", null);
+	const orderId = await shippedOrder("DHL", null);
 	await db.update(shipments).set({ trackingNumber: "JD01" });
 	const fetch = vi.fn();
 	vi.stubGlobal("fetch", fetch);
-	expect((await buyerOrder(db, threadId))?.packages[0]?.tracking).toEqual({
+	expect((await orderSummary(db, orderId)).packages[0]?.tracking).toEqual({
 		state: "unsupported",
 	});
 	await db.update(shipments).set({ trackingNumber: null });
-	expect((await buyerOrder(db, threadId))?.packages[0]?.tracking).toEqual({
+	expect((await orderSummary(db, orderId)).packages[0]?.tracking).toEqual({
 		state: "untracked",
 	});
 	expect(fetch).not.toHaveBeenCalled();

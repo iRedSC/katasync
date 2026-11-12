@@ -1,19 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
-import { buyerMessageChecks, buyerReplyFiles, buyerThreads } from "#/db/schema";
+import { buyerMessageChecks, buyerMessages, buyerThreads } from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import { syncEbayMessages } from "./ebay-messages";
-import { addReplyFile } from "./reply-files";
-import { reply, settleReplies } from "./send";
-import { logOurs, threadsPage, unlogOurs } from "./threads";
+import { countWaiting } from "./threads";
 
 // eBay's Message API, answered from a list of conversations and their
 // messages that a test can change between runs.
 
 let db: Db;
 let conversations: Record<string, { title: string; messages: Msg[] }>;
-let sendAnswer: () => Response;
-const sent: unknown[] = [];
 
 type Msg = {
 	messageId: string;
@@ -27,7 +23,7 @@ type Msg = {
 const json = (status: number, body: unknown) =>
 	new Response(JSON.stringify(body), { status });
 
-function ebay(url: string, init?: RequestInit) {
+function ebay(url: string) {
 	const u = new URL(url);
 	if (u.pathname === "/identity/v1/oauth2/token")
 		return json(200, { access_token: "t", expires_in: 7200 });
@@ -47,10 +43,6 @@ function ebay(url: string, init?: RequestInit) {
 		});
 	const one = /\/conversation\/([^/]+)$/.exec(u.pathname)?.[1];
 	if (one) return json(200, { messages: conversations[one]?.messages ?? [] });
-	if (u.pathname === "/commerce/message/v1/send_message") {
-		sent.push(JSON.parse(String(init?.body)));
-		return sendAnswer();
-	}
 	throw new Error(`Unexpected ${url}`);
 }
 
@@ -74,8 +66,6 @@ beforeEach(async () => {
 			messages: [msg("m1", "buyer1", "Does it fit a 10in box?", -10)],
 		},
 	};
-	sent.length = 0;
-	sendAnswer = () => json(201, { messageId: "m2" });
 	vi.stubGlobal("fetch", vi.fn(ebay));
 });
 afterEach(() => {
@@ -83,175 +73,60 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
+// Every message kept, oldest first.
+const kept = () =>
+	db.select().from(buyerMessages).orderBy(buyerMessages.at, buyerMessages.id);
+
 describe("eBay messages", () => {
 	test("reads each conversation once, telling ours from the buyer's", async () => {
 		conversations.c1?.messages.push(msg("m0", "ECDrywall", "Thanks!", -9));
 		expect(await syncEbayMessages(db)).toEqual({ read: 1, problems: [] });
 		expect(await syncEbayMessages(db)).toEqual({ read: 0, problems: [] });
-		const [thread] = await threadsPage(db, "open", null);
+		const [thread] = await db.select().from(buyerThreads);
 		expect(thread).toMatchObject({
 			market: "ebay",
 			buyerName: "buyer1",
 			itemRef: "1234",
 			subject: "About your scraper",
-			// Answered on eBay itself.
-			waiting: null,
 		});
+		// Answered on eBay itself.
+		expect(await countWaiting(db, "ebay")).toBe(0);
 		const [check] = await db.select().from(buyerMessageChecks);
 		expect(check).toMatchObject({ market: "ebay", error: null });
 		expect(check?.readThrough).not.toBeNull();
 	});
 
-	test("a reply goes into the conversation and is delivered", async () => {
+	test("waits on us until a reply on eBay is read back", async () => {
 		await syncEbayMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		expect(thread?.waiting).not.toBeNull();
-		const r = await reply(
-			db,
-			thread?.id ?? 0,
-			"Yes, it fits.",
-			crypto.randomUUID(),
-		);
-		expect(r.status).toBe("delivered");
-		expect(sent).toEqual([
-			{ conversationId: "c1", messageText: "Yes, it fits." },
-		]);
-		// Read back from eBay, it's the same message, not a second one.
+		expect(await countWaiting(db, "ebay")).toBe(1);
 		conversations.c1?.messages.push(msg("m2", "ECDrywall", "Yes, it fits.", 0));
 		await syncEbayMessages(db);
-		const [after] = await threadsPage(db, "open", null);
-		expect(after?.messages).toHaveLength(2);
-		expect(after?.waiting).toBeNull();
-	});
-
-	test("files go as links eBay fetches, and need words with them", async () => {
-		vi.stubEnv("AUTH_ORIGIN", "https://katasync.test");
-		await syncEbayMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const photo = await addReplyFile(db, {
-			filename: "box.png",
-			contentType: "image/png",
-			data: new Uint8Array([1, 2]),
-		});
-		await expect(
-			reply(db, thread?.id ?? 0, "", crypto.randomUUID(), [photo.id]),
-		).rejects.toThrow(/needs words/);
-		await reply(db, thread?.id ?? 0, "Here", crypto.randomUUID(), [photo.id]);
-		const [file] = await db.select().from(buyerReplyFiles);
-		expect(sent).toEqual([
-			{
-				conversationId: "c1",
-				messageText: "Here",
-				messageMedia: [
-					{
-						mediaName: "box.png",
-						mediaType: "IMAGE",
-						mediaUrl: `https://katasync.test/api/shared-files/${file?.shareToken}`,
-					},
-				],
-			},
+		expect((await kept()).map((m) => [m.body, m.fromBuyer])).toEqual([
+			["Does it fit a 10in box?", true],
+			["Yes, it fits.", false],
 		]);
-	});
-
-	test("an unsure send is never sent again, only found or given up on", async () => {
-		await syncEbayMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		sendAnswer = () => json(503, { error: "busy" });
-		expect(
-			(await reply(db, thread?.id ?? 0, "First", crypto.randomUUID())).status,
-		).toBe("sending");
-		sendAnswer = () => json(503, { error: "busy" });
-		expect(
-			(await reply(db, thread?.id ?? 0, "Second", crypto.randomUUID())).status,
-		).toBe("sending");
-		// eBay had the first after all.
-		conversations.c1?.messages.push(msg("m3", "ECDrywall", "First", 0));
-		await settleReplies(db, Date.now() + 120_000);
-		await settleReplies(db, Date.now() + 20 * 60_000);
-		expect(sent).toHaveLength(2);
-		const [after] = await threadsPage(db, "open", null);
-		expect(
-			after?.messages
-				.filter((m) => !m.fromBuyer)
-				.map((m) => [m.body, m.status]),
-		).toEqual([
-			["First", "delivered"],
-			// Never found: it may have gone, so it isn't called failed.
-			["Second", "unconfirmed"],
-		]);
+		expect(await countWaiting(db, "ebay")).toBe(0);
+		// Read again, nothing's doubled.
+		await syncEbayMessages(db, { sweep: true });
+		expect(await kept()).toHaveLength(2);
 	});
 
 	test("a buyer's message before one of ours is still read", async () => {
 		await syncEbayMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
 		conversations.c1?.messages.push(msg("b2", "buyer1", "Also, red?", -1));
-		await reply(db, thread?.id ?? 0, "Yes, it fits.", crypto.randomUUID());
 		conversations.c1?.messages.push(msg("m2", "ECDrywall", "Yes, it fits.", 0));
 		await syncEbayMessages(db);
-		const [after] = await threadsPage(db, "open", null);
-		expect(after?.messages.map((m) => m.body)).toEqual([
+		expect((await kept()).map((m) => m.body)).toEqual([
 			"Does it fit a 10in box?",
 			"Also, red?",
 			"Yes, it fits.",
 		]);
 	});
 
-	test("the same words sent before don't settle a new reply", async () => {
-		conversations.c1?.messages.push(msg("m0", "ECDrywall", "Thanks!", -9));
-		await syncEbayMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		sendAnswer = () => json(503, {});
-		await reply(db, thread?.id ?? 0, "Thanks!", crypto.randomUUID());
-		// An old "Thanks!" no one claimed, from before this was written.
-		conversations.c1?.messages.push(msg("m9", "ECDrywall", "Thanks!", -8));
-		const r = await settleReplies(db, Date.now() + 20 * 60_000);
-		expect(r.problems).toEqual([]);
-		const [after] = await threadsPage(db, "open", null);
-		expect(
-			after?.messages.filter((m) => m.status === "unconfirmed"),
-		).toHaveLength(1);
-	});
-
-	test("the same key twice is one reply, sent once", async () => {
-		await syncEbayMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const key = crypto.randomUUID();
-		const first = await reply(db, thread?.id ?? 0, "Yes", key);
-		const again = await reply(db, thread?.id ?? 0, "Yes", key);
-		expect(again).toEqual(first);
-		expect(sent).toHaveLength(1);
-	});
-
-	test("one added without sending is matched when eBay reads it back", async () => {
-		await syncEbayMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const key = crypto.randomUUID();
-		await logOurs(db, thread?.id ?? 0, "Sent it on eBay", key);
-		const [logged] = await threadsPage(db, "open", null);
-		expect(logged?.waiting).toBeNull();
-		expect(logged?.messages.at(-1)).toMatchObject({ logged: true });
-		expect(sent).toEqual([]);
-		// Sent on eBay before it was added here.
-		conversations.c1?.messages.push(
-			msg("m7", "ECDrywall", "Sent it on eBay", -5),
-		);
-		await syncEbayMessages(db, { sweep: true });
-		const [after] = await threadsPage(db, "open", null);
-		expect(after?.messages.map((m) => [m.body, m.logged])).toEqual([
-			["Does it fit a 10in box?", false],
-			["Sent it on eBay", false],
-		]);
-		// Matched to eBay's, it's no longer one undo can take out.
-		await unlogOurs(db, key);
-		expect((await threadsPage(db, "open", null))[0]?.messages).toHaveLength(2);
-	});
-
 	test("a photo with no words keeps the photo, filled in on a read again", async () => {
 		conversations.c1?.messages.push(msg("m3", "buyer1", "", -5));
 		await syncEbayMessages(db);
-		expect(
-			(await threadsPage(db, "open", null))[0]?.messages[1]?.media,
-		).toEqual([]);
+		expect((await kept())[1]?.media).toEqual([]);
 		const photo = {
 			mediaType: "IMAGE",
 			mediaName: "box.jpg",
@@ -263,9 +138,9 @@ describe("eBay messages", () => {
 		await db.update(buyerThreads).set({ readLatestId: null });
 		await db.update(buyerMessageChecks).set({ readThrough: null });
 		await syncEbayMessages(db);
-		const [t] = await threadsPage(db, "open", null);
-		expect(t?.messages).toHaveLength(2);
-		expect(t?.messages[1]).toMatchObject({
+		const messages = await kept();
+		expect(messages).toHaveLength(2);
+		expect(messages[1]).toMatchObject({
 			body: "",
 			media: [{ kind: "IMAGE", name: "box.jpg", url: photo.mediaUrl }],
 		});

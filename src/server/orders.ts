@@ -2,9 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { chatWay } from "#/buyers/chat-way";
 import { orderSummary } from "#/buyers/order";
-import { emailUnready } from "#/buyers/shopify-mail";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
@@ -475,29 +473,6 @@ export const getOrder = createServerFn({ method: "GET" })
 			),
 			mail,
 			buyerOrders,
-			// Shopify's own buyers are emailed from katasync; why not yet, if
-			// it isn't set up.
-			emailBuyer:
-				order.channel === "shopify" &&
-				!order.marketplaceOrderId &&
-				order.buyerEmail
-					? { to: order.buyerEmail, unready: emailUnready() }
-					: null,
-			// How staff can write to the buyer from here.
-			chat: chatWay(
-				{
-					...order,
-					returnAsked: requests.length > 0,
-					threads: mail.threads.map((t) => ({
-						id: t.id,
-						market: t.market,
-						lastAt: t.messages.at(-1)?.at ?? null,
-					})),
-					amazonPage:
-						adminUrls(order).find((p) => p.channel === "amazon")?.url ?? null,
-				},
-				new Date(),
-			),
 		};
 	});
 

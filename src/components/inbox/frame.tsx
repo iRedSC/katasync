@@ -15,7 +15,6 @@ import {
 	BUYERS,
 	type InboxFolder,
 	MARKET_FOLDERS,
-	PRECEDENTS,
 	PURCHASING_FOLDERS,
 	RULES,
 	VOICEMAILS,
@@ -29,7 +28,9 @@ import { tabClass } from "./mail-pane";
 // Where a folder's link goes; the market filter stays as it is.
 export const folderSearch = (folder: InboxFolder, market: Market | null) => ({
 	...(folder === "important" ? {} : { folder }),
-	...(market && folder !== "voicemails" ? { market } : {}),
+	...(market && folder !== "voicemails" && folder !== "buyers"
+		? { market }
+		: {}),
 });
 
 const waiting = (folder: InboxFolder, c: InboxCounts): number | null =>
@@ -106,9 +107,8 @@ export function InboxFrame({
 					{MARKET_FOLDERS.map(item)}
 					<Group>Purchasing</Group>
 					{PURCHASING_FOLDERS.map(item)}
-					{/* What sorts the mail and what the reply agent follows. */}
+					{/* What sorts the mail. */}
 					<div className="flex gap-0.5 md:mt-auto md:flex-col md:border-t md:pt-2">
-						{item(PRECEDENTS)}
 						{item(RULES)}
 					</div>
 				</nav>
@@ -126,8 +126,7 @@ function Group({ children }: { children: ReactNode }) {
 	);
 }
 
-// Which marketplace's mail shows, and reading the mailbox now (left out
-// without a check: Buyers reads its own sources).
+// Which marketplace's mail shows, and reading the mailbox now.
 export function MarketFilter({
 	folder,
 	market,
@@ -135,7 +134,7 @@ export function MarketFilter({
 }: {
 	folder: InboxFolder;
 	market: Market | null;
-	check?: MarketMailPage["check"];
+	check: MarketMailPage["check"];
 }) {
 	return (
 		<>
@@ -158,7 +157,7 @@ export function MarketFilter({
 					</Link>
 				))}
 			</div>
-			{check !== undefined && <CheckNow check={check} />}
+			<CheckNow check={check} />
 		</>
 	);
 }

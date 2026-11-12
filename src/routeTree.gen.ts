@@ -24,7 +24,6 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StockRouteImport } from './routes/stock'
 import { Route as DotwellKnownSplatRouteImport } from './routes/[.]well-known/$'
-import { Route as ApiBuyerFileUploadsRouteImport } from './routes/api/buyer-file-uploads'
 import { Route as LabelsIdRouteImport } from './routes/labels/$id'
 import { Route as LabelsSetupRouteImport } from './routes/labels/setup'
 import { Route as LabelsTestRouteImport } from './routes/labels/test'
@@ -51,7 +50,6 @@ import { Route as RepairsCustomersRouteImport } from './routes/repairs/customers
 import { Route as TransfersIndexRouteImport } from './routes/transfers/index'
 import { Route as TransfersIdRouteImport } from './routes/transfers/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
-import { Route as ApiBuyerFilesFileIdRouteImport } from './routes/api/buyer-files/$fileId'
 import { Route as ApiCatalogPhotosIndexRouteImport } from './routes/api/catalog-photos/index'
 import { Route as ApiCronInboxRouteImport } from './routes/api/cron/inbox'
 import { Route as ApiCronMessagesRouteImport } from './routes/api/cron/messages'
@@ -66,7 +64,6 @@ import { Route as ApiPoEmailAttachmentsAttachmentIdRouteImport } from './routes/
 import { Route as ApiPoFileUploadsPurchaseOrderIdRouteImport } from './routes/api/po-file-uploads/$purchaseOrderId'
 import { Route as ApiPoFilesFileIdRouteImport } from './routes/api/po-files/$fileId'
 import { Route as ApiReturnMediaMediaIdRouteImport } from './routes/api/return-media/$mediaId'
-import { Route as ApiSharedFilesTokenRouteImport } from './routes/api/shared-files/$token'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
 import { Route as LabelsBenchIdRouteImport } from './routes/labels/bench.$id'
 import { Route as LabelsRefurbsReturnIdRouteImport } from './routes/labels/refurbs.$returnId'
@@ -164,11 +161,6 @@ const StockRoute = StockRouteImport.update({
 const DotwellKnownSplatRoute = DotwellKnownSplatRouteImport.update({
   id: '/.well-known/$',
   path: '/.well-known/$',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiBuyerFileUploadsRoute = ApiBuyerFileUploadsRouteImport.update({
-  id: '/api/buyer-file-uploads',
-  path: '/api/buyer-file-uploads',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LabelsIdRoute = LabelsIdRouteImport.update({
@@ -301,11 +293,6 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiBuyerFilesFileIdRoute = ApiBuyerFilesFileIdRouteImport.update({
-  id: '/api/buyer-files/$fileId',
-  path: '/api/buyer-files/$fileId',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiCatalogPhotosIndexRoute = ApiCatalogPhotosIndexRouteImport.update({
   id: '/api/catalog-photos/',
   path: '/api/catalog-photos/',
@@ -377,11 +364,6 @@ const ApiPoFilesFileIdRoute = ApiPoFilesFileIdRouteImport.update({
 const ApiReturnMediaMediaIdRoute = ApiReturnMediaMediaIdRouteImport.update({
   id: '/api/return-media/$mediaId',
   path: '/api/return-media/$mediaId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiSharedFilesTokenRoute = ApiSharedFilesTokenRouteImport.update({
-  id: '/api/shared-files/$token',
-  path: '/api/shared-files/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
@@ -520,7 +502,6 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
   '/.well-known/$': typeof DotwellKnownSplatRoute
-  '/api/buyer-file-uploads': typeof ApiBuyerFileUploadsRoute
   '/labels/$id': typeof LabelsIdRoute
   '/labels/setup': typeof LabelsSetupRoute
   '/labels/test': typeof LabelsTestRoute
@@ -547,7 +528,6 @@ export interface FileRoutesByFullPath {
   '/repairs/': typeof RepairsIndexRoute
   '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/buyer-files/$fileId': typeof ApiBuyerFilesFileIdRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
   '/api/cron/messages': typeof ApiCronMessagesRoute
   '/api/cron/shippo-rebills': typeof ApiCronShippoRebillsRoute
@@ -561,7 +541,6 @@ export interface FileRoutesByFullPath {
   '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/return-media/$mediaId': typeof ApiReturnMediaMediaIdRoute
-  '/api/shared-files/$token': typeof ApiSharedFilesTokenRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/bench/$id': typeof LabelsBenchIdRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
@@ -603,7 +582,6 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
   '/.well-known/$': typeof DotwellKnownSplatRoute
-  '/api/buyer-file-uploads': typeof ApiBuyerFileUploadsRoute
   '/labels/$id': typeof LabelsIdRoute
   '/labels/setup': typeof LabelsSetupRoute
   '/labels/test': typeof LabelsTestRoute
@@ -630,7 +608,6 @@ export interface FileRoutesByTo {
   '/repairs': typeof RepairsIndexRoute
   '/transfers': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/buyer-files/$fileId': typeof ApiBuyerFilesFileIdRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
   '/api/cron/messages': typeof ApiCronMessagesRoute
   '/api/cron/shippo-rebills': typeof ApiCronShippoRebillsRoute
@@ -644,7 +621,6 @@ export interface FileRoutesByTo {
   '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/return-media/$mediaId': typeof ApiReturnMediaMediaIdRoute
-  '/api/shared-files/$token': typeof ApiSharedFilesTokenRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/bench/$id': typeof LabelsBenchIdRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
@@ -687,7 +663,6 @@ export interface FileRoutesById {
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
   '/.well-known/$': typeof DotwellKnownSplatRoute
-  '/api/buyer-file-uploads': typeof ApiBuyerFileUploadsRoute
   '/labels/$id': typeof LabelsIdRoute
   '/labels/setup': typeof LabelsSetupRoute
   '/labels/test': typeof LabelsTestRoute
@@ -714,7 +689,6 @@ export interface FileRoutesById {
   '/repairs/': typeof RepairsIndexRoute
   '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/buyer-files/$fileId': typeof ApiBuyerFilesFileIdRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
   '/api/cron/messages': typeof ApiCronMessagesRoute
   '/api/cron/shippo-rebills': typeof ApiCronShippoRebillsRoute
@@ -728,7 +702,6 @@ export interface FileRoutesById {
   '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/return-media/$mediaId': typeof ApiReturnMediaMediaIdRoute
-  '/api/shared-files/$token': typeof ApiSharedFilesTokenRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/bench/$id': typeof LabelsBenchIdRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
@@ -772,7 +745,6 @@ export interface FileRouteTypes {
     | '/setup'
     | '/stock'
     | '/.well-known/$'
-    | '/api/buyer-file-uploads'
     | '/labels/$id'
     | '/labels/setup'
     | '/labels/test'
@@ -799,7 +771,6 @@ export interface FileRouteTypes {
     | '/repairs/'
     | '/transfers/'
     | '/api/auth/$'
-    | '/api/buyer-files/$fileId'
     | '/api/cron/inbox'
     | '/api/cron/messages'
     | '/api/cron/shippo-rebills'
@@ -813,7 +784,6 @@ export interface FileRouteTypes {
     | '/api/po-file-uploads/$purchaseOrderId'
     | '/api/po-files/$fileId'
     | '/api/return-media/$mediaId'
-    | '/api/shared-files/$token'
     | '/api/webhooks/$channel'
     | '/labels/bench/$id'
     | '/labels/refurbs/$returnId'
@@ -855,7 +825,6 @@ export interface FileRouteTypes {
     | '/setup'
     | '/stock'
     | '/.well-known/$'
-    | '/api/buyer-file-uploads'
     | '/labels/$id'
     | '/labels/setup'
     | '/labels/test'
@@ -882,7 +851,6 @@ export interface FileRouteTypes {
     | '/repairs'
     | '/transfers'
     | '/api/auth/$'
-    | '/api/buyer-files/$fileId'
     | '/api/cron/inbox'
     | '/api/cron/messages'
     | '/api/cron/shippo-rebills'
@@ -896,7 +864,6 @@ export interface FileRouteTypes {
     | '/api/po-file-uploads/$purchaseOrderId'
     | '/api/po-files/$fileId'
     | '/api/return-media/$mediaId'
-    | '/api/shared-files/$token'
     | '/api/webhooks/$channel'
     | '/labels/bench/$id'
     | '/labels/refurbs/$returnId'
@@ -938,7 +905,6 @@ export interface FileRouteTypes {
     | '/setup'
     | '/stock'
     | '/.well-known/$'
-    | '/api/buyer-file-uploads'
     | '/labels/$id'
     | '/labels/setup'
     | '/labels/test'
@@ -965,7 +931,6 @@ export interface FileRouteTypes {
     | '/repairs/'
     | '/transfers/'
     | '/api/auth/$'
-    | '/api/buyer-files/$fileId'
     | '/api/cron/inbox'
     | '/api/cron/messages'
     | '/api/cron/shippo-rebills'
@@ -979,7 +944,6 @@ export interface FileRouteTypes {
     | '/api/po-file-uploads/$purchaseOrderId'
     | '/api/po-files/$fileId'
     | '/api/return-media/$mediaId'
-    | '/api/shared-files/$token'
     | '/api/webhooks/$channel'
     | '/labels/bench/$id'
     | '/labels/refurbs/$returnId'
@@ -1022,7 +986,6 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   StockRoute: typeof StockRoute
   DotwellKnownSplatRoute: typeof DotwellKnownSplatRoute
-  ApiBuyerFileUploadsRoute: typeof ApiBuyerFileUploadsRoute
   LabelsIdRoute: typeof LabelsIdRoute
   LabelsSetupRoute: typeof LabelsSetupRoute
   LabelsTestRoute: typeof LabelsTestRoute
@@ -1049,7 +1012,6 @@ export interface RootRouteChildren {
   RepairsIndexRoute: typeof RepairsIndexRoute
   TransfersIndexRoute: typeof TransfersIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
-  ApiBuyerFilesFileIdRoute: typeof ApiBuyerFilesFileIdRoute
   ApiCronInboxRoute: typeof ApiCronInboxRoute
   ApiCronMessagesRoute: typeof ApiCronMessagesRoute
   ApiCronShippoRebillsRoute: typeof ApiCronShippoRebillsRoute
@@ -1063,7 +1025,6 @@ export interface RootRouteChildren {
   ApiPoFileUploadsPurchaseOrderIdRoute: typeof ApiPoFileUploadsPurchaseOrderIdRoute
   ApiPoFilesFileIdRoute: typeof ApiPoFilesFileIdRoute
   ApiReturnMediaMediaIdRoute: typeof ApiReturnMediaMediaIdRoute
-  ApiSharedFilesTokenRoute: typeof ApiSharedFilesTokenRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
   LabelsBenchIdRoute: typeof LabelsBenchIdRoute
   LabelsRefurbsReturnIdRoute: typeof LabelsRefurbsReturnIdRoute
@@ -1195,13 +1156,6 @@ declare module '@tanstack/react-router' {
       path: '/.well-known/$'
       fullPath: '/.well-known/$'
       preLoaderRoute: typeof DotwellKnownSplatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/buyer-file-uploads': {
-      id: '/api/buyer-file-uploads'
-      path: '/api/buyer-file-uploads'
-      fullPath: '/api/buyer-file-uploads'
-      preLoaderRoute: typeof ApiBuyerFileUploadsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/labels/$id': {
@@ -1386,13 +1340,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/buyer-files/$fileId': {
-      id: '/api/buyer-files/$fileId'
-      path: '/api/buyer-files/$fileId'
-      fullPath: '/api/buyer-files/$fileId'
-      preLoaderRoute: typeof ApiBuyerFilesFileIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/catalog-photos/': {
       id: '/api/catalog-photos/'
       path: '/api/catalog-photos'
@@ -1489,13 +1436,6 @@ declare module '@tanstack/react-router' {
       path: '/api/return-media/$mediaId'
       fullPath: '/api/return-media/$mediaId'
       preLoaderRoute: typeof ApiReturnMediaMediaIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/shared-files/$token': {
-      id: '/api/shared-files/$token'
-      path: '/api/shared-files/$token'
-      fullPath: '/api/shared-files/$token'
-      preLoaderRoute: typeof ApiSharedFilesTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/webhooks/$channel': {
@@ -1678,7 +1618,6 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   StockRoute: StockRoute,
   DotwellKnownSplatRoute: DotwellKnownSplatRoute,
-  ApiBuyerFileUploadsRoute: ApiBuyerFileUploadsRoute,
   LabelsIdRoute: LabelsIdRoute,
   LabelsSetupRoute: LabelsSetupRoute,
   LabelsTestRoute: LabelsTestRoute,
@@ -1705,7 +1644,6 @@ const rootRouteChildren: RootRouteChildren = {
   RepairsIndexRoute: RepairsIndexRoute,
   TransfersIndexRoute: TransfersIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
-  ApiBuyerFilesFileIdRoute: ApiBuyerFilesFileIdRoute,
   ApiCronInboxRoute: ApiCronInboxRoute,
   ApiCronMessagesRoute: ApiCronMessagesRoute,
   ApiCronShippoRebillsRoute: ApiCronShippoRebillsRoute,
@@ -1721,7 +1659,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPoFileUploadsPurchaseOrderIdRoute: ApiPoFileUploadsPurchaseOrderIdRoute,
   ApiPoFilesFileIdRoute: ApiPoFilesFileIdRoute,
   ApiReturnMediaMediaIdRoute: ApiReturnMediaMediaIdRoute,
-  ApiSharedFilesTokenRoute: ApiSharedFilesTokenRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
   LabelsBenchIdRoute: LabelsBenchIdRoute,
   LabelsRefurbsReturnIdRoute: LabelsRefurbsReturnIdRoute,

@@ -1,7 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
-	buyerThreads,
 	dispatchOrders,
 	orderLines,
 	orders,
@@ -20,27 +19,12 @@ import {
 } from "#/orders/to-ship";
 import { carrierPage, type TrackingRead } from "#/orders/tracking-read";
 import { normalTracking } from "#/purchasing/inbox/tracking-numbers";
-import { isThreadOrder } from "./thread-order";
 
-// What a buyer's order is and where its packages are, for the top of their
-// conversation and the order page: the products, and each package (ours,
+// What a buyer's order is and where its packages are, beside mail about it
+// and on the order page: the products, and each package (ours,
 // and those the channel says it shipped on labels bought there) with every
 // scan the carrier has given (through Shippo). A carrier that can't be
 // asked leaves the last scans known, marked stale. Server only.
-
-export async function buyerOrder(db: Db, threadId: number) {
-	const [found] = await db
-		.select({ id: orders.id })
-		.from(buyerThreads)
-		.leftJoin(stores, eq(stores.channel, buyerThreads.market))
-		.innerJoin(
-			orders,
-			isThreadOrder(buyerThreads.market, buyerThreads.orderRef),
-		)
-		.where(eq(buyerThreads.id, threadId))
-		.limit(1);
-	return found ? orderSummary(db, found.id) : null;
-}
 
 // An order's status, products, and packages, wherever it's shown beside
 // mail.

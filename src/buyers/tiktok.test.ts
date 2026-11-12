@@ -3,29 +3,17 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 vi.mock("#/channels/tiktok", async (actual) => {
 	const real = await actual<typeof import("#/channels/tiktok")>();
 	return {
-		TiktokError: real.TiktokError,
-		retryLater: real.retryLater,
 		searchPage: real.searchPage,
 		shopCipher: async () => "cipher",
 		tiktokApi: vi.fn(),
-		tiktokUpload: vi.fn(async () => ({
-			url: "https://p16.tiktok/up.png",
-			width: 4,
-			height: 3,
-		})),
 	};
 });
 
-import { TiktokError, tiktokApi, tiktokUpload } from "#/channels/tiktok";
+import { tiktokApi } from "#/channels/tiktok";
 import type { Db } from "#/db/client";
-import { buyerMessageChecks, orders, stores } from "#/db/schema";
+import { buyerMessageChecks, buyerMessages, buyerThreads } from "#/db/schema";
 import { createTestDb } from "#/test/db";
-import { draftFits } from "./chat-way";
-import { setDraft } from "./drafts";
-import { buyerOrder } from "./order";
-import { addReplyFile } from "./reply-files";
-import { reply, settleReplies } from "./send";
-import { threadsPage } from "./threads";
+import { countWaiting } from "./threads";
 import { syncTiktokMessages } from "./tiktok-messages";
 
 // TikTok's Customer Service API, answered from conversations a test can
@@ -44,8 +32,6 @@ let db: Db;
 let conversations: Record<string, Msg[]>;
 // Each buyer's orders on TikTok, latest first, by their user ID (u-<chat>).
 let buyerOrders: Record<string, string[]>;
-let sendAnswer: () => unknown;
-const sent: unknown[] = [];
 
 // A message this many minutes from now (before, when negative).
 const at = (minutes: number) => Math.floor(Date.now() / 1000 + minutes * 60);
@@ -82,8 +68,6 @@ beforeEach(async () => {
 		c2: [text("r2", "ROBOT", "Your order shipped", -30)],
 	};
 	buyerOrders = {};
-	sent.length = 0;
-	sendAnswer = () => ({ message_id: "s1" });
 	vi.mocked(tiktokApi).mockReset();
 	vi.mocked(tiktokApi).mockImplementation(async (path, _query, body) => {
 		if (path === "/customer_service/202309/conversations")
@@ -106,10 +90,6 @@ beforeEach(async () => {
 			};
 		}
 		const one = /conversations\/([^/]+)\/messages$/.exec(path)?.[1];
-		if (one && body) {
-			sent.push(body);
-			return sendAnswer();
-		}
 		if (one)
 			return {
 				messages: latestFirst(conversations[one] ?? []),
@@ -119,20 +99,23 @@ beforeEach(async () => {
 	});
 });
 
+// The threads kept, and every message, oldest first.
+const threads = () => db.select().from(buyerThreads);
+const kept = () =>
+	db.select().from(buyerMessages).orderBy(buyerMessages.at, buyerMessages.id);
+
 describe("TikTok messages", () => {
 	test("a chat a buyer wrote in is a thread about its order, without TikTok's notices", async () => {
 		expect(await syncTiktokMessages(db)).toEqual({ read: 1, problems: [] });
-		const threads = await threadsPage(db, "open", null);
-		expect(threads).toHaveLength(1);
-		expect(threads[0]).toMatchObject({
+		const all = await threads();
+		expect(all).toHaveLength(1);
+		expect(all[0]).toMatchObject({
 			market: "tiktok",
 			buyerName: "drywaller7",
 			orderRef: "5770001",
 		});
-		expect(threads[0]?.messages.map((m) => m.body)).toEqual([
-			"Where is my order?",
-		]);
-		expect(threads[0]?.waiting).not.toBeNull();
+		expect((await kept()).map((m) => m.body)).toEqual(["Where is my order?"]);
+		expect(await countWaiting(db, "tiktok")).toBe(1);
 		// Nothing new: neither is read again.
 		vi.mocked(tiktokApi).mockClear();
 		expect(await syncTiktokMessages(db)).toEqual({ read: 0, problems: [] });
@@ -157,11 +140,11 @@ describe("TikTok messages", () => {
 		};
 		// Not findable on TikTok yet: the thread waits without one.
 		expect(await syncTiktokMessages(db)).toEqual({ read: 1, problems: [] });
-		expect((await threadsPage(db, "open", null))[0]?.orderRef).toBeNull();
+		expect((await threads())[0]?.orderRef).toBeNull();
 		// Nothing new in the chat, but a waiting thread asks again.
 		buyerOrders = { "u-c3": ["5770009", "5770002"] };
 		expect(await syncTiktokMessages(db)).toEqual({ read: 0, problems: [] });
-		expect((await threadsPage(db, "open", null))[0]?.orderRef).toBe("5770009");
+		expect((await threads())[0]?.orderRef).toBe("5770009");
 		// Once tied, TikTok isn't asked again.
 		vi.mocked(tiktokApi).mockClear();
 		await syncTiktokMessages(db);
@@ -170,41 +153,14 @@ describe("TikTok messages", () => {
 		).toEqual([]);
 	});
 
-	test("an order Shopify relayed and never handed over is still the thread's", async () => {
-		const [shop] = await db
-			.insert(stores)
-			.values({ channel: "shopify", name: "ECDT" })
-			.returning();
-		await db.insert(orders).values({
-			storeId: shop?.id ?? 0,
-			externalId: "gid-1",
-			name: "#1001",
-			marketplaceOrderId: "tiktok:5770001",
-			placedAt: new Date(),
-			fulfillmentStatus: "FULFILLED",
-			total: 40,
-			sourceUpdatedAt: new Date(),
-		});
+	test("a card about another order moves the thread", async () => {
 		await syncTiktokMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		expect(thread).toMatchObject({ orderRef: "5770001", orderName: "#1001" });
-		expect((await buyerOrder(db, thread?.id ?? 0))?.name).toBe("#1001");
-	});
-
-	test("a card about another order moves the thread, and its suggestion stays with the first", async () => {
-		await syncTiktokMessages(db);
-		const [first] = await threadsPage(db, "open", null);
-		await setDraft(db, first?.id ?? 0, { body: "It shipped" }, "staff");
 		conversations.c1?.push(
 			card("o2", "ORDER_CARD", { order_id: "5770002" }, -2),
 			text("b2", "BUYER", "And this one?", -1),
 		);
 		await syncTiktokMessages(db);
-		const [t] = await threadsPage(db, "open", null);
-		expect(t?.orderRef).toBe("5770002");
-		// Written about the first order: not offered for the new one.
-		expect(t?.draft?.forOrder).toBe("5770001");
-		expect(draftFits(t?.draft ?? { forOrder: null }, "5770002")).toBe(false);
+		expect((await threads())[0]?.orderRef).toBe("5770002");
 	});
 
 	test("a chat with an order card never asks TikTok for the buyer's orders", async () => {
@@ -214,84 +170,24 @@ describe("TikTok messages", () => {
 		).toEqual([]);
 	});
 
-	test("TikTok's own messages are kept with the thread, and never answer the buyer", async () => {
+	test("TikTok's own messages never answer the buyer", async () => {
 		conversations.c1?.push(
 			text("r3", "ROBOT", "Se vende en paquetes de 5.", -9),
 			{
 				...card("n1", "NOTIFICATION", { content: "The chat timed out" }, -8),
 				sender: { role: "SYSTEM", nickname: "ECDT" },
 			},
-			card("x1", "OTHER", { content: "[Other] See Seller Center" }, -7),
-			{ ...card("x2", "OTHER", { content: "" }, -6), is_visible: false },
 		);
 		await syncTiktokMessages(db);
 		await syncTiktokMessages(db, { sweep: true });
-		const [thread] = await threadsPage(db, "open", null);
-		expect(thread?.waiting).not.toBeNull();
-		expect(
-			thread?.marketplace.map((m) => [m.kind, m.body || m.orderRef]),
-		).toEqual([
-			["order_card", "5770001"],
-			["assistant", "Thanks for your order!"],
-			["assistant", "Se vende en paquetes de 5."],
-			["notice", "The chat timed out"],
-			["other", null],
-		]);
+		expect((await kept()).map((m) => m.body)).toEqual(["Where is my order?"]);
+		expect(await countWaiting(db, "tiktok")).toBe(1);
 	});
 
 	test("an answer from Seller Center counts as ours", async () => {
 		conversations.c1?.push(text("h1", "CUSTOMER_SERVICE", "On its way", -2));
 		await syncTiktokMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		expect(thread?.waiting).toBeNull();
-	});
-
-	test("a reply goes into the conversation and is delivered once", async () => {
-		await syncTiktokMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const r = await reply(
-			db,
-			thread?.id ?? 0,
-			"Tomorrow.",
-			crypto.randomUUID(),
-		);
-		expect(r.status).toBe("delivered");
-		expect(sent).toEqual([
-			{ type: "TEXT", content: JSON.stringify({ content: "Tomorrow." }) },
-		]);
-		conversations.c1?.push({ ...text("s1", "SHOP", "Tomorrow.", 0) });
-		await syncTiktokMessages(db);
-		const [after] = await threadsPage(db, "open", null);
-		expect(after?.messages).toHaveLength(2);
-		expect(after?.waiting).toBeNull();
-	});
-
-	test("a refusal fails the reply; an unsure send is only looked for", async () => {
-		await syncTiktokMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		sendAnswer = () => {
-			throw new TiktokError(12052001, "send", "Conversation closed");
-		};
-		const no = await reply(db, thread?.id ?? 0, "No", crypto.randomUUID());
-		expect(no.status).toBe("failed");
-		sendAnswer = () => {
-			throw new TiktokError(36009003, "send", "Internal error. Retry later");
-		};
-		const maybe = await reply(
-			db,
-			thread?.id ?? 0,
-			"Maybe",
-			crypto.randomUUID(),
-		);
-		expect(maybe.status).toBe("sending");
-		// TikTok had it after all.
-		conversations.c1?.push(text("s2", "SHOP", "Maybe", 0));
-		await settleReplies(db, Date.now() + 120_000);
-		expect(sent).toHaveLength(2);
-		const [after] = await threadsPage(db, "open", null);
-		expect(
-			after?.messages.filter((m) => !m.fromBuyer).map((m) => m.status),
-		).toEqual(["failed", "delivered"]);
+		expect(await countWaiting(db, "tiktok")).toBe(0);
 	});
 
 	test("a picture from the buyer is kept as one", async () => {
@@ -300,107 +196,9 @@ describe("TikTok messages", () => {
 			sender: { role: "BUYER", nickname: "drywaller7" },
 		});
 		await syncTiktokMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		expect(thread?.messages.at(-1)).toMatchObject({
+		expect((await kept()).at(-1)).toMatchObject({
 			body: "",
 			media: [{ kind: "IMAGE", url: "https://p16.tiktok/box.jpg" }],
 		});
-	});
-
-	test("pictures go up once, each as its own message before the words, and aren't read back twice", async () => {
-		await syncTiktokMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const photo = await addReplyFile(db, {
-			filename: "box.png",
-			contentType: "image/png",
-			data: new Uint8Array([1, 2]),
-		});
-		const pdf = await addReplyFile(db, {
-			filename: "label.pdf",
-			contentType: "application/pdf",
-			data: new Uint8Array([1]),
-		});
-		await expect(
-			reply(db, thread?.id ?? 0, "", crypto.randomUUID(), [pdf.id]),
-		).rejects.toThrow(/Takes pictures/);
-		let n = 0;
-		sendAnswer = () => ({ message_id: `s${++n}` });
-		const r = await reply(db, thread?.id ?? 0, "Here", crypto.randomUUID(), [
-			photo.id,
-		]);
-		expect(r.status).toBe("delivered");
-		expect(tiktokUpload).toHaveBeenCalledTimes(1);
-		const image = { url: "https://p16.tiktok/up.png", width: 4, height: 3 };
-		expect(sent).toEqual([
-			{ type: "IMAGE", content: JSON.stringify(image) },
-			{ type: "TEXT", content: JSON.stringify({ content: "Here" }) },
-		]);
-		// Read back: the picture and the words, still one reply.
-		conversations.c1?.push(
-			{
-				...card("s1", "IMAGE", image, 0),
-				sender: { role: "SHOP", nickname: "ECDT" },
-			},
-			text("s2", "SHOP", "Here", 0),
-		);
-		await syncTiktokMessages(db, { sweep: true });
-		const [after] = await threadsPage(db, "open", null);
-		expect(after?.messages.filter((m) => !m.fromBuyer)).toHaveLength(1);
-		expect(after?.messages.at(-1)?.media).toMatchObject([
-			{ kind: "IMAGE", fileId: photo.id, externalId: "s1" },
-		]);
-	});
-
-	test("pictures without words are delivered only once every one is found, by TikTok's address for it", async () => {
-		await syncTiktokMessages(db);
-		const [thread] = await threadsPage(db, "open", null);
-		const ids = [];
-		for (const name of ["a.png", "b.png"])
-			ids.push(
-				(
-					await addReplyFile(db, {
-						filename: name,
-						contentType: "image/png",
-						data: new Uint8Array([1]),
-					})
-				).id,
-			);
-		const image = (name: string) => ({
-			url: `https://p16.tiktok/${name}`,
-			width: 4,
-			height: 3,
-		});
-		vi.mocked(tiktokUpload)
-			.mockResolvedValueOnce(image("a.png"))
-			.mockResolvedValueOnce(image("b.png"));
-		// The first goes with an ID; the second without one.
-		const answers = [{ message_id: "s1" }, {}];
-		sendAnswer = () => answers.shift();
-		const r = await reply(db, thread?.id ?? 0, "", crypto.randomUUID(), ids);
-		expect(r.status).toBe("sending");
-		expect(sent).toHaveLength(2);
-		const ours = (id: string, name: string, minutes: number) => ({
-			...card(id, "IMAGE", image(name), minutes),
-			sender: { role: "SHOP", nickname: "ECDT" },
-		});
-		const mine = async () =>
-			(await threadsPage(db, "open", null))[0]?.messages
-				.filter((m) => !m.fromBuyer)
-				.map((m) => [m.status, m.media.map((f) => f.url)]);
-		// A picture of ours sent another way isn't the one missing: kept as its
-		// own, and the reply still isn't delivered.
-		conversations.c1?.push(ours("s1", "a.png", 0), ours("p9", "other.png", 1));
-		await settleReplies(db, Date.now() + 20 * 60_000);
-		expect(await mine()).toEqual([
-			["unconfirmed", [expect.any(String), expect.any(String)]],
-			["delivered", ["https://p16.tiktok/other.png"]],
-		]);
-		// The one missing turns up: delivered.
-		conversations.c1?.push(ours("p2", "b.png", 2));
-		await syncTiktokMessages(db, { sweep: true });
-		expect((await mine())?.map(([status]) => status)).toEqual([
-			"delivered",
-			"delivered",
-		]);
 	});
 });
