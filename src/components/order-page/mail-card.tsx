@@ -1,40 +1,22 @@
-import { useNavigate } from "@tanstack/react-router";
-import { Mail, MessageSquare } from "lucide-react";
+import { Mail } from "lucide-react";
 import { useState } from "react";
 import { EmailReader, snippet } from "#/components/emails/reader";
 import { Badge, Card } from "#/components/page";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
-import { channelName, formatCount, formatOrderDate } from "#/lib/format";
+import { formatCount, formatOrderDate } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { OrderDetail } from "#/server/orders";
 
 type Email = OrderDetail["mail"]["emails"][number];
-type Thread = OrderDetail["mail"]["threads"][number];
-type Entry =
-	| { kind: "email"; key: string; at: Date; email: Email }
-	| { kind: "thread"; key: string; at: Date; thread: Thread };
 
-// Everything written about the order: marketplace emails that name it and
-// buyers' conversations about it, newest first. A click opens one over
-// the page, read as the inbox reads it; a conversation to answer in place
-// (message-buyer.tsx). With none, there's no card.
+// The marketplace emails that name the order, newest first. A click opens
+// one over the page, read as the inbox reads it. With none, there's no card.
 export function MailCard({ mail }: { mail: OrderDetail["mail"] }) {
-	const navigate = useNavigate();
-	const [open, setOpen] = useState<Entry | null>(null);
-	const entries: Entry[] = [
-		...mail.emails.map((e) => ({
-			kind: "email" as const,
-			key: `e${e.id}`,
-			at: e.receivedAt,
-			email: e,
-		})),
-		...mail.threads.map((t) => ({
-			kind: "thread" as const,
-			key: `t${t.id}`,
-			at: t.messages.at(-1)?.at ?? new Date(0),
-			thread: t,
-		})),
-	].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+	const [open, setOpen] = useState<Email | null>(null);
+	const entries = [...mail.emails].sort(
+		(a, b) =>
+			new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime(),
+	);
 	if (entries.length === 0) return null;
 	return (
 		<Card
@@ -49,32 +31,20 @@ export function MailCard({ mail }: { mail: OrderDetail["mail"] }) {
 			<ul>
 				{entries.map((e) => (
 					<Row
-						key={e.key}
-						entry={e}
-						open={open?.key === e.key}
-						onOpen={() =>
-							e.kind === "thread"
-								? navigate({
-										to: ".",
-										search: (s: Record<string, unknown>) => ({
-											...s,
-											chat: e.thread.id,
-										}),
-										replace: true,
-										resetScroll: false,
-									})
-								: setOpen(e)
-						}
+						key={e.id}
+						email={e}
+						open={open?.id === e.id}
+						onOpen={() => setOpen(e)}
 					/>
 				))}
 			</ul>
 			<Dialog open={open !== null} onOpenChange={(o) => !o && setOpen(null)}>
-				{open?.kind === "email" && (
+				{open && (
 					<DialogContent className="flex h-[min(85svh,56rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
-						<DialogTitle className="sr-only">{open.email.subject}</DialogTitle>
+						<DialogTitle className="sr-only">{open.subject}</DialogTitle>
 						<EmailReader
-							key={open.email.id}
-							email={open.email}
+							key={open.id}
+							email={open}
 							box="marketplaces"
 							fileUrl={(a) => `/api/market-email-attachments/${a.id}`}
 							className="min-h-0 flex-1"
@@ -87,27 +57,20 @@ export function MailCard({ mail }: { mail: OrderDetail["mail"] }) {
 }
 
 function Row({
-	entry: e,
+	email: e,
 	open,
 	onOpen,
 }: {
-	entry: Entry;
+	email: Email;
 	open: boolean;
 	onOpen: () => void;
 }) {
-	const last = e.kind === "thread" ? e.thread.messages.at(-1) : undefined;
-	const title = e.kind === "email" ? e.email.subject : e.thread.subject;
-	const from =
-		e.kind === "email"
-			? (e.email.fromName ?? e.email.fromAddress)
-			: `${e.thread.buyerName ?? "Buyer"} on ${channelName(e.thread.market)}`;
-	const preview =
-		e.kind === "email"
-			? snippet(e.email.body)
-			: last
-				? snippet(last.english ?? last.body)
-				: "";
-	const Icon = e.kind === "email" ? Mail : MessageSquare;
+	const level = e.critical
+		? { tone: "critical" as const, label: "Critical" }
+		: e.important
+			? { tone: "warning" as const, label: "Important" }
+			: null;
+	const preview = snippet(e.body);
 	return (
 		<li className="border-t first:border-t-0">
 			<button
@@ -118,44 +81,27 @@ function Row({
 					open ? "bg-surface" : "hover:bg-subtle",
 				)}
 			>
-				<Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+				<Mail className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 				<span className="min-w-0 flex-1">
 					<span className="flex items-baseline gap-2">
 						<span className="min-w-0 flex-1 truncate font-medium">
-							{title || "(no subject)"}
+							{e.subject || "(no subject)"}
 						</span>
 						<span className="shrink-0 text-xs text-muted-foreground">
-							{formatOrderDate(e.at)}
+							{formatOrderDate(e.receivedAt)}
 						</span>
 					</span>
 					<span className="block truncate text-xs text-muted-foreground">
-						{from}
+						{e.fromName ?? e.fromAddress}
 						{preview && ` · ${preview}`}
 					</span>
-					<Tags entry={e} />
+					{level && (
+						<span className="mt-1 flex">
+							<Badge tone={level.tone}>{level.label}</Badge>
+						</span>
+					)}
 				</span>
 			</button>
 		</li>
 	);
-}
-
-function Tags({ entry: e }: { entry: Entry }) {
-	if (e.kind === "thread") {
-		const last = e.thread.messages.at(-1);
-		return last?.fromBuyer && e.thread.doneAt === null ? (
-			<span className="mt-1 flex">
-				<Badge tone="info">Needs a reply</Badge>
-			</span>
-		) : null;
-	}
-	const level = e.email.critical
-		? { tone: "critical" as const, label: "Critical" }
-		: e.email.important
-			? { tone: "warning" as const, label: "Important" }
-			: null;
-	return level ? (
-		<span className="mt-1 flex">
-			<Badge tone={level.tone}>{level.label}</Badge>
-		</span>
-	) : null;
 }

@@ -5,7 +5,6 @@ import {
 	Inbox,
 	type LucideIcon,
 	MessagesSquare,
-	Scale,
 	ShieldAlert,
 	ShoppingCart,
 	Star,
@@ -21,12 +20,7 @@ import { FOLDER_NAMES, FOLDERS, type Folder } from "#/inbox/rules";
 
 export type MarketView = "important" | "voicemails" | Folder | "done";
 export type PurchasingView = "unfiled" | "filed";
-export type InboxFolder =
-	| "buyers"
-	| "precedents"
-	| MarketView
-	| PurchasingView
-	| "rules";
+export type InboxFolder = "buyers" | MarketView | PurchasingView | "rules";
 
 type Entry = { folder: InboxFolder; name: string; icon: LucideIcon };
 
@@ -54,7 +48,7 @@ export const PURCHASING_FOLDERS: Entry[] = [
 	{ folder: "filed", name: "Filed", icon: FolderCheck },
 ];
 
-// Conversations with buyers, answered in place.
+// How many buyers wait on a reply, in each marketplace.
 export const BUYERS: Entry = {
 	folder: "buyers",
 	name: "Buyers",
@@ -65,13 +59,6 @@ export const VOICEMAILS: Entry = {
 	folder: "voicemails",
 	name: "Voicemails",
 	icon: Voicemail,
-};
-
-// What the reply agent follows.
-export const PRECEDENTS: Entry = {
-	folder: "precedents",
-	name: "Precedents",
-	icon: Scale,
 };
 
 export const RULES: Entry = { folder: "rules", name: "Rules", icon: Wand2 };
@@ -87,7 +74,6 @@ export const isPurchasingView = (f: InboxFolder): f is PurchasingView =>
 const ALL = [
 	BUYERS,
 	VOICEMAILS,
-	PRECEDENTS,
 	...MARKET_FOLDERS,
 	...PURCHASING_FOLDERS,
 	RULES,

@@ -1,321 +1,178 @@
-import { Link, useRouter } from "@tanstack/react-router";
-import { ArrowLeft, MessagesSquare, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { CheckCheck, ExternalLink, RefreshCw } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
-import type { BuyerThread, MessageSource } from "#/buyers/threads";
+import type { MessageMarket } from "#/buyers/threads";
 import { ChannelBadge } from "#/components/channel-badge";
-import { EmptyState } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
-import { channelName, formatDateTime, formatTime } from "#/lib/format";
-import { useHotkeys } from "#/lib/hotkeys";
+import { channelName, formatCount, formatDateTime } from "#/lib/format";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
-import type { Market } from "#/markets/market";
 import {
-	type BuyerThreadsPage,
+	type BuyerMarket,
 	checkBuyerMessagesNow,
-	setBuyerThreadDone,
+	clearBuyerMarket,
+	unclearBuyerThreads,
 } from "#/server/buyers";
 import type { InboxCounts } from "#/server/inbox";
-import { BuyerConversation } from "./buyer-thread";
-import { DueChip } from "./due-chip";
-import { folderSearch, InboxFrame } from "./frame";
-import {
-	type Hidden,
-	hide,
-	noneHidden,
-	retire,
-	unhide,
-	visible,
-} from "./hidden-threads";
-import { tabClass } from "./mail-pane";
+import { InboxFrame } from "./frame";
 
-// The Buyers folder: every conversation with a buyer, those waiting on us
-// first, soonest due first, each answered in place. Above them, whether
-// every source of messages is being read, since a quiet list must mean no
-// messages, not a source that stopped.
+// The Buyers folder: how many buyers wait on a reply in each marketplace.
+// They're read and answered on the marketplace itself, so each row opens
+// its messages there. A source that isn't being read says so on its row,
+// since its count would otherwise look like no one's waiting. Clear takes
+// what needs no answer (a "thanks") out of the count, with undo.
+
+const MESSAGES_PAGE: Record<MessageMarket, string> = {
+	amazon: "https://sellercentral.amazon.com/messaging/inbox",
+	ebay: "https://mesg.ebay.com/mesgweb/ViewMessages/0",
+	tiktok: "https://seller-us.tiktok.com/chat/inbox/current",
+};
 
 export function BuyerBox({
-	view,
-	market,
-	page,
+	markets,
 	counts,
-	open = null,
 }: {
-	view: "open" | "done";
-	market: Market | null;
-	page: BuyerThreadsPage;
+	markets: BuyerMarket[];
 	counts: InboxCounts;
-	// The thread a link opened (an order's Email buyer).
-	open?: number | null;
 }) {
-	const router = useRouter();
-	const [hidden, setHidden] = useState<Hidden>(noneHidden);
-	const threads = visible(page.threads, hidden, view);
-	// Once the server's list has moved a conversation, hiding it is done.
-	useEffect(() => {
-		setHidden((h) => retire(h, view, page.threads));
-	}, [view, page.threads]);
-	const [selectedId, setSelectedId] = useState<number | null>(open);
-	const [reading, setReading] = useState(open !== null);
-	// A link to another conversation (the URL's thread changing) opens it; the
-	// same link again leaves staff where they've moved to.
-	const [linked, setLinked] = useState(open);
-	if (open !== linked) {
-		setLinked(open);
-		if (open !== null) {
-			setSelectedId(open);
-			setReading(true);
-		}
-	}
-	const selected =
-		threads.find((t) => t.id === selectedId) ?? threads[0] ?? null;
-
-	// Replies still on their way settle on the server; look again until
-	// they have.
-	const inFlight = page.threads.some((t) =>
-		t.messages.some((m) => m.status === "sending" || m.status === "sent"),
-	);
-	useEffect(() => {
-		if (!inFlight) return;
-		const timer = setInterval(() => router.invalidate(), 15_000);
-		return () => clearInterval(timer);
-	}, [inFlight, router]);
-
-	const show = (id: number) => setHidden((h) => unhide(h, id));
-	async function done(t: BuyerThread, isDone: boolean) {
-		setHidden((h) => hide(h, t.id, view));
-		try {
-			await setBuyerThreadDone({ data: { id: t.id, done: isDone } });
-		} catch (error) {
-			show(t.id);
-			toast.error("Couldn't move it", {
-				description: error instanceof Error ? error.message : String(error),
-			});
-			return;
-		}
-		offerUndo(isDone ? "Done" : "Reopened", {
-			undo: async () => {
-				await setBuyerThreadDone({ data: { id: t.id, done: !isDone } });
-				await router.invalidate();
-				show(t.id);
-				return "Put back";
-			},
-		});
-		await router.invalidate();
-	}
-
-	useHotkeys({
-		j: () => step(1),
-		k: () => step(-1),
-		...(selected ? { e: () => done(selected, view === "open") } : {}),
-	});
-	function step(by: number) {
-		const i = threads.findIndex((t) => t.id === selected?.id);
-		const next = threads[i + by];
-		if (next) setSelectedId(next.id);
-	}
-
 	return (
 		<InboxFrame
 			folder="buyers"
-			market={market}
+			market={null}
 			counts={{
 				...counts,
-				buyers: page.threads.filter((t) => t.waiting).length,
+				buyers: markets.reduce((n, m) => n + m.waiting, 0),
 			}}
 		>
-			<div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
-				<div className="flex gap-1 rounded-lg border p-0.5">
-					{(["open", "done"] as const).map((v) => (
-						<Link
-							key={v}
-							to="/inbox"
-							search={{
-								...folderSearch("buyers", market),
-								...(v === "done" ? { threads: "done" as const } : {}),
-							}}
-							className={tabClass(view === v)}
-						>
-							{v === "open" ? "Open" : "Done"}
-						</Link>
-					))}
-				</div>
-				<Sources sources={page.sources} />
+			<div className="flex justify-end border-b px-3 py-2">
+				<CheckNow />
 			</div>
-			{selected === null ? (
-				<EmptyState
-					icon={MessagesSquare}
-					title={view === "open" ? "No one's waiting" : "Nothing done yet"}
-				/>
-			) : (
-				<div className="grid md:min-h-0 md:flex-1 md:grid-cols-[22rem_minmax(0,1fr)]">
-					<ul
-						className={cn(
-							"min-h-0 divide-y overflow-y-auto md:border-r",
-							reading && "hidden md:block",
-						)}
-					>
-						{threads.map((t) => (
-							<ThreadRow
-								key={t.id}
-								thread={t}
-								market={market}
-								selected={t.id === selected.id}
-								onOpen={() => {
-									setSelectedId(t.id);
-									setReading(true);
-								}}
-							/>
-						))}
-					</ul>
-					<div
-						className={cn(
-							"flex min-h-0 flex-col",
-							!reading && "hidden md:flex",
-						)}
-					>
-						<button
-							type="button"
-							onClick={() => setReading(false)}
-							className="flex items-center gap-1 px-4 pt-3 text-muted-foreground md:hidden"
-						>
-							<ArrowLeft className="size-4" />
-							Buyers
-						</button>
-						<BuyerConversation
-							key={selected.id}
-							thread={selected}
-							ai={page.ai}
-							onDone={(isDone) => done(selected, isDone)}
-						/>
-					</div>
-				</div>
-			)}
+			<ul className="divide-y">
+				{markets.map((m) => (
+					<MarketRow key={m.market} market={m} />
+				))}
+			</ul>
 		</InboxFrame>
 	);
 }
 
-// A message of only pictures or files, in a few words.
-const mediaLine = (media: { kind: string }[]) => {
-	const photos = media.filter((m) => m.kind === "IMAGE").length;
-	if (photos === media.length && photos > 0)
-		return photos === 1 ? "Photo" : `${photos} photos`;
-	return media.length === 1 ? "File" : `${media.length} files`;
-};
+function MarketRow({ market: m }: { market: BuyerMarket }) {
+	const router = useRouter();
+	// Zero at once on Clear, until the reload says what's left.
+	const [cleared, setCleared] = useState(false);
+	const waiting = cleared ? 0 : m.waiting;
 
-function ThreadRow({
-	thread: t,
-	market,
-	selected,
-	onOpen,
-}: {
-	thread: BuyerThread;
-	market: Market | null;
-	selected: boolean;
-	onOpen: () => void;
-}) {
-	const last = t.messages.at(-1);
+	async function clear() {
+		setCleared(true);
+		try {
+			const { cleared: ids } = await clearBuyerMarket({
+				data: { market: m.market },
+			});
+			await router.invalidate();
+			if (ids.length > 0)
+				offerUndo(`Cleared ${formatCount(ids.length)}`, {
+					undo: async () => {
+						await unclearBuyerThreads({ data: { ids } });
+						await router.invalidate();
+						return "Put back";
+					},
+				});
+		} catch (error) {
+			toast.error("Couldn't clear", {
+				description: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			setCleared(false);
+		}
+	}
+
 	return (
-		<li>
-			<button
-				type="button"
-				onClick={onOpen}
-				className={cn(
-					"flex w-full flex-col gap-0.5 px-4 py-2.5 text-left",
-					selected ? "bg-surface-strong" : "hover:bg-surface",
-				)}
+		<li className="flex items-center hover:bg-surface">
+			<a
+				href={MESSAGES_PAGE[m.market]}
+				aria-label={`${channelName(m.market)}: ${waiting} unanswered`}
+				target="_blank"
+				rel="noreferrer"
+				className="group flex min-w-0 flex-1 items-center gap-3 py-4 pl-4"
 			>
-				<span className="flex items-center gap-1.5">
-					<span
-						className={cn(
-							"min-w-0 flex-1 truncate",
-							t.waiting ? "font-semibold" : "text-muted-foreground",
-						)}
+				<ChannelBadge channel={m.market} salesChannel={null} />
+				{m.source.kind !== "read" && (
+					<Tip
+						content={
+							m.source.kind === "failed"
+								? m.source.error
+								: m.source.checkedAt
+									? `Last read ${formatDateTime(m.source.checkedAt)}`
+									: "Never read"
+						}
 					>
-						{t.buyerName ?? "Buyer"}
-					</span>
-					{market === null && (
-						<ChannelBadge channel={t.market} salesChannel={null} compact />
+						<span className="flex items-center gap-1.5 text-sm font-medium text-critical-text">
+							<span className="size-2 animate-pulse rounded-full bg-critical-text" />
+							{m.source.kind === "failed" ? "Not read" : "Behind"}
+						</span>
+					</Tip>
+				)}
+				<span
+					key={waiting}
+					className={cn(
+						"ml-auto text-2xl tabular-nums animate-in fade-in-0 zoom-in-90",
+						waiting > 0
+							? "font-semibold text-critical-text"
+							: "text-muted-foreground",
 					)}
-					{t.waiting ? (
-						<DueChip due={t.waiting.due} now={Date.now()} />
-					) : (
-						last && (
-							<span className="text-xs text-muted-foreground tabular-nums">
-								{formatTime(last.at)}
-							</span>
-						)
-					)}
+				>
+					{waiting}
 				</span>
-				<span className="truncate text-sm text-muted-foreground">
-					{last && !last.fromBuyer && "You: "}
-					{last ? last.body || mediaLine(last.media) : t.subject}
-				</span>
-			</button>
+				<ExternalLink className="size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+			</a>
+			{/* Kept in place at zero, so the count doesn't shift. */}
+			<span className="px-2">
+				<Tip content="Clear: none of these need an answer">
+					<Button
+						size="sm"
+						variant="ghost"
+						aria-label={`Clear ${channelName(m.market)}`}
+						className={cn(waiting === 0 && "invisible")}
+						onClick={clear}
+					>
+						<CheckCheck />
+					</Button>
+				</Tip>
+			</span>
 		</li>
 	);
 }
 
-// A dot per source: green while it's read on time, red when it isn't, with
-// why. The list is only complete while every dot is green.
-function Sources({ sources }: { sources: MessageSource[] }) {
+// Reads every marketplace now; the counts reload with what's new.
+function CheckNow() {
 	const router = useRouter();
 	const [busy, setBusy] = useState(false);
 	return (
-		<span className="ml-auto flex items-center gap-3">
-			{sources.map((s) => {
-				const broken = Boolean(s.error) || s.behind;
-				return (
-					<Tip
-						key={s.market}
-						content={
-							s.error ??
-							(s.checkedAt
-								? `Read ${formatDateTime(s.checkedAt)}`
-								: "Never read")
-						}
-					>
-						<span className="flex items-center gap-1.5 text-sm">
-							<span
-								className={cn(
-									"size-2 rounded-full",
-									broken ? "animate-pulse bg-critical-text" : "bg-success-text",
-								)}
-							/>
-							<span className={cn(broken && "font-medium text-critical-text")}>
-								{channelName(s.market)}
-								{broken && (s.error ? " not read" : " behind")}
-							</span>
-						</span>
-					</Tip>
-				);
-			})}
-			<Tip content="Check for new messages">
-				<Button
-					size="sm"
-					variant="ghost"
-					disabled={busy}
-					aria-label="Check for new messages"
-					onClick={async () => {
-						setBusy(true);
-						try {
-							await checkBuyerMessagesNow();
-						} catch (error) {
-							toast.error("Couldn't check", {
-								description:
-									error instanceof Error ? error.message : String(error),
-							});
-						} finally {
-							await router.invalidate();
-							setBusy(false);
-						}
-					}}
-				>
-					<RefreshCw className={cn(busy && "animate-spin")} />
-				</Button>
-			</Tip>
-		</span>
+		<Tip content="Check for new messages">
+			<Button
+				size="sm"
+				variant="ghost"
+				disabled={busy}
+				aria-label="Check for new messages"
+				onClick={async () => {
+					setBusy(true);
+					try {
+						await checkBuyerMessagesNow();
+					} catch (error) {
+						toast.error("Couldn't check", {
+							description:
+								error instanceof Error ? error.message : String(error),
+						});
+					} finally {
+						await router.invalidate();
+						setBusy(false);
+					}
+				}}
+			>
+				<RefreshCw className={cn(busy && "animate-spin")} />
+			</Button>
+		</Tip>
 	);
 }

@@ -125,18 +125,6 @@ export function TimelineCard({ detail: d }: { detail: OrderDetail }) {
 			),
 			tone: e.critical ? "critical" : undefined,
 		});
-	for (const t of d.mail.threads)
-		for (const m of t.messages)
-			events.push({
-				key: `m${m.id}`,
-				at: new Date(m.at),
-				body: m.fromBuyer
-					? `${t.buyerName ?? "The buyer"} wrote`
-					: m.status === "failed"
-						? "Our reply didn't send"
-						: "We replied",
-				tone: m.status === "failed" ? "critical" : undefined,
-			});
 	events.sort((a, b) => b.at.getTime() - a.at.getTime());
 
 	const days: { day: string; events: Event[] }[] = [];

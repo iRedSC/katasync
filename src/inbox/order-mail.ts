@@ -1,17 +1,12 @@
-import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import {
-	buyerMessages,
-	buyerThreads,
-	marketEmailAttachments,
-	marketEmails,
-} from "#/db/schema";
+import { marketEmailAttachments, marketEmails } from "#/db/schema";
 import { groupBy } from "#/lib/group-by";
 import type { Market } from "#/markets/market";
 import { type OrderRef, orderRefs } from "./mail-orders";
 
-// The mail about one order, for its page: marketplace emails that name it,
-// and buyers' conversations about it. The reverse of mail-orders.ts, and
+// The mail about one order, for its page: marketplace emails that name it.
+// The reverse of mail-orders.ts, and
 // held to the same reading of an email: a text search finds candidates, and
 // only the ones orderRefs reads this order's number in are kept, so "#574"
 // never brings in #5747's emails. Server only.
@@ -107,59 +102,10 @@ export async function orderMail(db: Db, order: Order) {
 					.orderBy(marketEmailAttachments.id);
 	const byEmail = groupBy(files, (f) => f.emailId);
 
-	// A buyer's thread names the order by the marketplace's ID for it.
-	const threads = await db
-		.select({
-			id: buyerThreads.id,
-			market: buyerThreads.market,
-			buyerName: buyerThreads.buyerName,
-			subject: buyerThreads.subject,
-			doneAt: buyerThreads.doneAt,
-		})
-		.from(buyerThreads)
-		.where(
-			or(
-				...refs
-					.filter((r) => r.by === "id")
-					.map((r) =>
-						and(
-							eq(buyerThreads.market, r.market),
-							eq(buyerThreads.orderRef, r.ref),
-						),
-					),
-			),
-		);
-	const messages =
-		threads.length > 0
-			? await db
-					.select({
-						id: buyerMessages.id,
-						threadId: buyerMessages.threadId,
-						fromBuyer: buyerMessages.fromBuyer,
-						body: buyerMessages.body,
-						english: buyerMessages.english,
-						at: buyerMessages.at,
-						status: buyerMessages.status,
-					})
-					.from(buyerMessages)
-					.where(
-						inArray(
-							buyerMessages.threadId,
-							threads.map((t) => t.id),
-						),
-					)
-					.orderBy(buyerMessages.at)
-			: [];
 	return {
 		emails: emails.map((e) => ({
 			...e,
 			attachments: (byEmail.get(e.id) ?? []).map(({ emailId: _, ...f }) => f),
-		})),
-		threads: threads.map((t) => ({
-			...t,
-			messages: messages
-				.filter((m) => m.threadId === t.id)
-				.map(({ threadId: _, ...m }) => m),
 		})),
 	};
 }

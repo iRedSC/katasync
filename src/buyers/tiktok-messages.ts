@@ -1,39 +1,18 @@
 import { type } from "arktype";
 import { and, eq, isNull } from "drizzle-orm";
-import {
-	retryLater,
-	searchPage,
-	shopCipher,
-	TiktokError,
-	tiktokApi,
-	tiktokUpload,
-} from "#/channels/tiktok";
+import { searchPage, shopCipher, tiktokApi } from "#/channels/tiktok";
 import type { Db } from "#/db/client";
-import {
-	type BuyerMedia,
-	buyerMessageChecks,
-	buyerMessages,
-	buyerReplyFiles,
-	buyerThreads,
-} from "#/db/schema";
+import { type BuyerMedia, buyerMessageChecks, buyerThreads } from "#/db/schema";
 import { keepConversation, type ListedMessage } from "./conversation";
-import {
-	keepMarketplaceMessages,
-	type ListedMarketplaceMessage,
-} from "./marketplace-messages";
-import { replyFileData } from "./reply-files";
-import { Refused, Unsure } from "./states";
 import { ensureThread, moveThreadOrder } from "./threads";
 
 // TikTok Shop buyer chats through its Customer Service API (202309): every
 // conversation with something new since a little before the last full read,
-// so a run that failed or ran late leaves no gap; and our replies sent into
-// them. It needs the seller.customer_service scope (pnpm tiktok:authorize).
-// TikTok opens a conversation for every order and fills it with its own
-// notices (ROBOT and SYSTEM); only one a buyer wrote in becomes a thread,
-// and its notices are kept with it (marketplace-messages.ts). Conversations
-// only TikTok's assistant answered never reach Seller Center's inbox, so
-// what katasync keeps may be the only place to read one.
+// so a run that failed or ran late leaves no gap. It needs the
+// seller.customer_service scope (pnpm tiktok:authorize). TikTok opens a
+// conversation for every order and fills it with its own notices (ROBOT and
+// SYSTEM), which never count as anyone's; only one a buyer wrote in becomes
+// a thread.
 
 const BASE = "/customer_service/202309/conversations";
 
@@ -155,49 +134,6 @@ async function latestOrderOf(cipher: string, buyerUserId: string) {
 		),
 	);
 	return page.orders?.[0]?.id ?? null;
-}
-
-// One of TikTok's own, as the thread shows it; none when hidden or empty.
-// Its order and shipping cards carry only IDs, so the card is katasync's
-// own, from the order.
-export function marketplaceMessage(
-	m: Message,
-): ListedMarketplaceMessage | null {
-	if (m.is_visible === false || fromPerson(m)) return null;
-	const c = contentOf(m);
-	const base = { externalId: m.id, at: new Date(m.create_time * 1000) };
-	const orderRef = field(c, "order_id");
-	switch (m.type) {
-		case "ORDER_CARD":
-			return orderRef
-				? { ...base, kind: "order_card", orderRef }
-				: { ...base, kind: "other" };
-		case "LOGISTICS_CARD":
-			return orderRef
-				? {
-						...base,
-						kind: "shipping_card",
-						orderRef,
-						packageRef: field(c, "package_id") ?? null,
-					}
-				: { ...base, kind: "other" };
-		case "TEXT":
-		case "NOTIFICATION":
-		case "ALLOCATED_SERVICE": {
-			const body = field(c, "content")?.trim();
-			if (!body) return null;
-			return {
-				...base,
-				kind:
-					m.type === "TEXT" && m.sender.role === "ROBOT"
-						? "assistant"
-						: "notice",
-				body,
-			};
-		}
-		default:
-			return { ...base, kind: "other" };
-	}
 }
 
 const listed = (m: Message): ListedMessage => ({
@@ -354,12 +290,7 @@ async function syncConversation(
 			buyerName: buyer?.nickname ?? null,
 			orderRef: orderOf(messages),
 		}));
-	await keepConversation(db, kept.id, people.map(listed), { apart: true });
-	await keepMarketplaceMessages(
-		db,
-		kept.id,
-		messages.flatMap((m) => marketplaceMessage(m) ?? []),
-	);
+	await keepConversation(db, kept.id, people.map(listed));
 	// TikTok keeps one conversation a buyer: a later card about another of
 	// their orders moves the thread to it.
 	const order = orderOf(messages);
@@ -371,166 +302,4 @@ async function syncConversation(
 		.set({ readLatestId: latest.id })
 		.where(eq(buyerThreads.id, kept.id));
 	return true;
-}
-
-const created = type({ conversation_id: "string", "+": "ignore" });
-
-// Opens the shop's conversation with a buyer (TikTok's user ID for them),
-// reopening the one they had if any; its ID back. Nothing is sent: TikTok
-// only allows it within its limits on the order, so a plain no is Refused.
-export async function openTiktokConversation(buyerUserId: string) {
-	try {
-		return created.assert(
-			await tiktokApi(
-				BASE,
-				{ shop_cipher: await shopCipher() },
-				{ buyer_user_id: buyerUserId },
-			),
-		).conversation_id;
-	} catch (error) {
-		const why = error instanceof Error ? error.message : String(error);
-		throw error instanceof TiktokError && !retryLater(error)
-			? new Refused(why)
-			: error;
-	}
-}
-
-// A conversation staff started, kept whole like one a buyer wrote in, so
-// the thread shows what TikTok already put in it.
-export async function readStartedTiktokThread(db: Db, threadId: number) {
-	const [thread] = await db
-		.select()
-		.from(buyerThreads)
-		.where(eq(buyerThreads.id, threadId));
-	if (!thread) return;
-	const messages = await allMessages(await shopCipher(), thread.externalId);
-	await keepConversation(
-		db,
-		thread.id,
-		messages.filter(fromPerson).map(listed),
-		{ apart: true },
-	);
-	await keepMarketplaceMessages(
-		db,
-		thread.id,
-		messages.flatMap((m) => marketplaceMessage(m) ?? []),
-	);
-	const latest = messages.reduce<Message | undefined>(
-		(a, m) => (!a || m.create_time >= a.create_time ? m : a),
-		undefined,
-	);
-	if (latest)
-		await db
-			.update(buyerThreads)
-			.set({ readLatestId: latest.id })
-			.where(eq(buyerThreads.id, thread.id));
-}
-
-// Reads one thread's conversation again, to settle a reply whose send
-// didn't say how it went.
-export async function rereadTiktokThread(db: Db, threadId: number) {
-	const [thread] = await db
-		.select()
-		.from(buyerThreads)
-		.where(eq(buyerThreads.id, threadId));
-	if (!thread) return;
-	const messages = await allMessages(await shopCipher(), thread.externalId);
-	await keepConversation(
-		db,
-		thread.id,
-		messages.filter(fromPerson).map(listed),
-		{ apart: true },
-	);
-}
-
-const sentData = type({ "message_id?": "string", "+": "ignore" });
-const uploaded = type({ url: "string", width: "number", height: "number" });
-
-// Sends a reply into a conversation: each picture as a message of its own
-// (TikTok's copy, uploaded once and kept on the file), then the words. Each
-// message sent is written on the reply as it goes, so reading the
-// conversation back never takes one for a second reply. TikTok's message ID
-// for the last back. Throws Refused only while nothing has gone; after
-// that, or when TikTok may have taken it anyway, Unsure: TikTok has no
-// request key, so that's never sent again blind, only looked for
-// (rereadTiktokThread).
-export async function sendTiktokReply(
-	db: Db,
-	r: { id: number; conversationId: string; text: string; media: BuyerMedia[] },
-) {
-	let cipher: string;
-	let files: Awaited<ReturnType<typeof replyFileData>>;
-	try {
-		cipher = await shopCipher();
-		files = await replyFileData(db, r.media);
-	} catch (error) {
-		// Nothing was sent yet.
-		throw new Refused(error instanceof Error ? error.message : String(error));
-	}
-	let sentAny = false;
-	// A plain no fails the reply only while nothing of it has gone.
-	const stop = (error: unknown, plainNo: boolean): never => {
-		const why = error instanceof Error ? error.message : String(error);
-		throw plainNo && !sentAny ? new Refused(why) : new Unsure(why);
-	};
-	const send = async (body: { type: string; content: string }) => {
-		let answer: unknown;
-		try {
-			answer = await tiktokApi(
-				`${BASE}/${r.conversationId}/messages`,
-				{ shop_cipher: cipher },
-				body,
-			);
-		} catch (error) {
-			return stop(error, error instanceof TiktokError && !retryLater(error));
-		}
-		sentAny = true;
-		const id = sentData(answer);
-		if (!(id instanceof type.errors) && id.message_id) return id.message_id;
-		throw new Unsure(`TikTok took it without an ID: ${JSON.stringify(answer)}`);
-	};
-	const media = [...r.media];
-	let last: string | undefined;
-	for (const file of files) {
-		let image = file.tiktokImage;
-		if (!image) {
-			try {
-				const form = new FormData();
-				form.append(
-					"data",
-					new Blob([new Uint8Array(file.data)], { type: file.contentType }),
-					file.filename,
-				);
-				image = uploaded.assert(
-					await tiktokUpload(
-						"/customer_service/202309/images/upload",
-						{ shop_cipher: cipher },
-						form,
-					),
-				);
-			} catch (error) {
-				// An upload sends nothing to the buyer.
-				return stop(error, true);
-			}
-			await db
-				.update(buyerReplyFiles)
-				.set({ tiktokImage: image })
-				.where(eq(buyerReplyFiles.id, file.id));
-		}
-		last = await send({ type: "IMAGE", content: JSON.stringify(image) });
-		const at = media.findIndex((m) => m.fileId === file.id);
-		const entry = media[at];
-		if (entry) media[at] = { ...entry, externalId: last };
-		await db
-			.update(buyerMessages)
-			.set({ media })
-			.where(eq(buyerMessages.id, r.id));
-	}
-	if (r.text)
-		last = await send({
-			type: "TEXT",
-			content: JSON.stringify({ content: r.text }),
-		});
-	if (!last) throw new Refused("Nothing to send");
-	return last;
 }

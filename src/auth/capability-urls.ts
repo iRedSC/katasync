@@ -7,6 +7,8 @@ import { appOrigin } from "./origin";
 const CAPABILITY_PATHS = [
 	"/api/uploads/po-file/",
 	"/api/uploads/damage/",
+	// Buyer reply files, no longer served; links to them in old logs are
+	// still kept out.
 	"/api/shared-files/",
 ] as const;
 

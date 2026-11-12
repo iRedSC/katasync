@@ -1,15 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-	and,
-	asc,
-	count,
-	desc,
-	eq,
-	inArray,
-	isNotNull,
-	isNull,
-	sql,
-} from "drizzle-orm";
+import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	type BuyerMedia,
@@ -17,31 +7,18 @@ import {
 	buyerMessages,
 	buyerThreads,
 	mailboxChecks,
-	orders,
-	replyDrafts,
-	replyPrecedents,
-	stores,
 } from "#/db/schema";
 import type { Market } from "#/markets/market";
-import type { ReplyFile } from "./attachments";
-import { marketplaceMessagesOf } from "./marketplace-messages";
-import { replyFileSizes } from "./reply-files";
-import { ANSWERING, answers, type ReplyStatus } from "./states";
-import { isThreadOrder } from "./thread-order";
+import { ANSWERING } from "./states";
 
 // Conversations with buyers, as katasync keeps them: read in from each
-// marketplace (./amazon-mail.ts, ./ebay-messages.ts,
-// ./tiktok-messages.ts), answered from the
-// Inbox (./send.ts). Server only.
+// marketplace (./amazon-mail.ts, ./ebay-messages.ts, ./tiktok-messages.ts)
+// only to count those waiting on us. They're read and answered on the
+// marketplaces themselves. Server only.
 
-// How long each marketplace gives to answer a buyer. Amazon counts 24 hours,
-// weekends too; TikTok Shop 12. eBay sets none, so we hold to a day.
-export const REPLY_WITHIN_MS: Record<Market, number> = {
-	amazon: 24 * 3_600_000,
-	ebay: 24 * 3_600_000,
-	tiktok: 12 * 3_600_000,
-	shopify: 24 * 3_600_000,
-};
+// The marketplaces whose buyer messages are read, in the order shown.
+export const MESSAGE_MARKETS = ["amazon", "ebay", "tiktok"] as const;
+export type MessageMarket = (typeof MESSAGE_MARKETS)[number];
 
 export type ThreadKey = {
 	market: Market;
@@ -95,31 +72,12 @@ export async function ensureThread(db: Db, t: ThreadKey) {
 }
 
 // The thread is about another order now: a later card in its conversation
-// names it. A suggestion kept for the thread's own order stays with the one
-// it was written about, so it's drafted again for the new one; one written
-// about the new one is the thread's own now. One being drafted read the old
-// order: its claim is dropped, so what it writes is never saved as the new
-// one's, and the next run drafts it over at once.
+// names it.
 export async function moveThreadOrder(db: Db, threadId: number, to: string) {
-	await db.transaction(async (tx) => {
-		const [t] = await tx
-			.select({ orderRef: buyerThreads.orderRef })
-			.from(buyerThreads)
-			.where(eq(buyerThreads.id, threadId))
-			.for("update");
-		if (!t || t.orderRef === to) return;
-		await tx
-			.update(replyDrafts)
-			.set({
-				orderRef: sql`case when ${replyDrafts.orderRef} is null then ${t.orderRef}::text when ${replyDrafts.orderRef} = ${to} then null else ${replyDrafts.orderRef} end`,
-				updatedAt: sql`case when ${replyDrafts.state} = 'drafting' then 'epoch'::timestamptz else ${replyDrafts.updatedAt} end`,
-			})
-			.where(eq(replyDrafts.threadId, threadId));
-		await tx
-			.update(buyerThreads)
-			.set({ orderRef: to })
-			.where(eq(buyerThreads.id, threadId));
-	});
+	await db
+		.update(buyerThreads)
+		.set({ orderRef: to })
+		.where(eq(buyerThreads.id, threadId));
 }
 
 // A buyer's message; false when it was already kept. A new one opens a
@@ -203,53 +161,6 @@ export async function recordOurs(
 	return row !== undefined;
 }
 
-// What a reply staff added without sending carries for its ID until the
-// marketplace's own turns up (eBay reads it back; Amazon never does).
-export const LOGGED = "logged:";
-export const isLogged = (externalId: string | null) =>
-	externalId?.startsWith(LOGGED) ?? false;
-
-// A reply staff sent on the marketplace itself, added so the thread shows
-// it answered. Nothing is sent. The same key twice is one message.
-export async function logOurs(
-	db: Db,
-	threadId: number,
-	body: string,
-	requestKey: string,
-) {
-	const words = body.trim();
-	if (!words) throw new Error("Write something first");
-	const now = new Date();
-	const [row] = await db
-		.insert(buyerMessages)
-		.values({
-			threadId,
-			fromBuyer: false,
-			externalId: `${LOGGED}${requestKey}`,
-			body: words,
-			at: now,
-			status: "delivered",
-			requestKey,
-			statusAt: now,
-		})
-		.onConflictDoNothing()
-		.returning({ id: buyerMessages.id });
-	await db.delete(replyDrafts).where(eq(replyDrafts.threadId, threadId));
-	return row ?? null;
-}
-
-// Takes back one added without sending; one sent through katasync can't be.
-export async function unlogOurs(db: Db, requestKey: string) {
-	await db
-		.delete(buyerMessages)
-		.where(
-			and(
-				eq(buyerMessages.requestKey, requestKey),
-				eq(buyerMessages.externalId, `${LOGGED}${requestKey}`),
-			),
-		);
-}
-
 // Someone was done with it, or wasn't after all.
 export async function setThreadDone(db: Db, id: number, done: boolean) {
 	const [row] = await db
@@ -261,205 +172,11 @@ export async function setThreadDone(db: Db, id: number, done: boolean) {
 	return row;
 }
 
-type Message = {
-	id: number;
-	fromBuyer: boolean;
-	body: string;
-	at: Date;
-	status: ReplyStatus | null;
-	error: string | null;
-};
-
-// Whether a thread waits on us, and since when: the buyer's messages after
-// our last reply that didn't fail. Due is when the marketplace's clock runs
-// out, counted from the first of those.
-export function waitingOn(
-	market: Market,
-	messages: Pick<Message, "fromBuyer" | "at" | "status">[],
-) {
-	const sorted = [...messages].sort((a, b) => a.at.getTime() - b.at.getTime());
-	let since: Date | null = null;
-	for (const m of sorted) {
-		if (m.fromBuyer) since ??= m.at;
-		else if (answers(m.status)) since = null;
-	}
-	return since
-		? { since, due: new Date(since.getTime() + REPLY_WITHIN_MS[market]) }
-		: null;
-}
-
-// The threads of a view, those waiting first, soonest due first; then the
-// rest, latest first. Each with its messages, oldest first. Every open one,
-// so none waiting is ever cut off; done ones, the latest done. Or just one,
-// open or done.
-export async function threadsPage(
-	db: Db,
-	view: "open" | "done" | { id: number },
-	market: Market | null,
-	limit = 200,
-) {
-	const query = db
-		.select({
-			id: buyerThreads.id,
-			market: buyerThreads.market,
-			buyerName: buyerThreads.buyerName,
-			subject: buyerThreads.subject,
-			orderRef: buyerThreads.orderRef,
-			itemRef: buyerThreads.itemRef,
-			doneAt: buyerThreads.doneAt,
-			orderId: orders.id,
-			orderName: orders.name,
-		})
-		.from(buyerThreads)
-		.leftJoin(
-			stores,
-			and(
-				eq(stores.channel, buyerThreads.market),
-				isNotNull(buyerThreads.orderRef),
-			),
-		)
-		.leftJoin(orders, isThreadOrder(buyerThreads.market, buyerThreads.orderRef))
-		.where(
-			and(
-				typeof view === "object"
-					? eq(buyerThreads.id, view.id)
-					: view === "done"
-						? isNotNull(buyerThreads.doneAt)
-						: isNull(buyerThreads.doneAt),
-				market ? eq(buyerThreads.market, market) : undefined,
-			),
-		)
-		.orderBy(desc(buyerThreads.doneAt), desc(buyerThreads.id))
-		.$dynamic();
-	const threads = await (view === "done" ? query.limit(limit) : query);
-	// A thread whose order is in two stores of a channel would show twice.
-	const unique = [...new Map(threads.map((t) => [t.id, t])).values()];
-	const messages =
-		unique.length === 0
-			? []
-			: await db
-					.select({
-						id: buyerMessages.id,
-						threadId: buyerMessages.threadId,
-						fromBuyer: buyerMessages.fromBuyer,
-						body: buyerMessages.body,
-						at: buyerMessages.at,
-						status: buyerMessages.status,
-						error: buyerMessages.error,
-						requestKey: buyerMessages.requestKey,
-						externalId: buyerMessages.externalId,
-						media: buyerMessages.media,
-						language: buyerMessages.language,
-						english: buyerMessages.english,
-					})
-					.from(buyerMessages)
-					.where(
-						inArray(
-							buyerMessages.threadId,
-							unique.map((t) => t.id),
-						),
-					)
-					.orderBy(asc(buyerMessages.at), asc(buyerMessages.id));
-	const [drafts, precedents, marketplace, sizes] =
-		unique.length === 0
-			? [[], [], [], new Map<number, { type: string; size: number }>()]
-			: await Promise.all([
-					db
-						.select()
-						.from(replyDrafts)
-						.where(
-							inArray(
-								replyDrafts.threadId,
-								unique.map((t) => t.id),
-							),
-						),
-					db
-						.select({ id: replyPrecedents.id, name: replyPrecedents.name })
-						.from(replyPrecedents),
-					marketplaceMessagesOf(
-						db,
-						unique.map((t) => t.id),
-					),
-					replyFileSizes(
-						db,
-						messages.flatMap((m) =>
-							m.fromBuyer ? [] : m.media.flatMap((f) => f.fileId ?? []),
-						),
-					),
-				]);
-	const shaped = unique.map((t) => {
-		const own = messages
-			.filter((m) => m.threadId === t.id)
-			.map(({ threadId: _, externalId, ...m }) => ({
-				...m,
-				// Added by staff without katasync sending it.
-				logged: isLogged(externalId),
-				// Ours uploaded, as sending it again sends them.
-				files: m.media.flatMap((f): ReplyFile[] => {
-					const kept = f.fileId ? sizes.get(f.fileId) : undefined;
-					return f.fileId && kept
-						? [
-								{
-									name: f.name,
-									kind: f.kind,
-									url: f.url,
-									fileId: f.fileId,
-									...kept,
-								},
-							]
-						: [];
-				}),
-			}));
-		const last = own.at(-1);
-		const latestTheirs = own.filter((m) => m.fromBuyer).at(-1);
-		const d = drafts.find((x) => x.threadId === t.id);
-		return {
-			...t,
-			messages: own,
-			// The marketplace's own, shown with them; never counted as either
-			// side's.
-			marketplace: marketplace.filter((m) => m.threadId === t.id),
-			lastAt: last?.at ?? null,
-			waiting: t.doneAt ? null : waitingOn(t.market, own),
-			// The buyer's language, from their latest message read.
-			language:
-				own.filter((m) => m.fromBuyer && m.language).at(-1)?.language ?? null,
-			draft: d
-				? {
-						state: d.state,
-						body: d.body,
-						english: d.english,
-						note: d.note,
-						by: d.by,
-						error: d.error,
-						updatedAt: d.updatedAt,
-						// The order it was written about (null: none).
-						forOrder: d.orderRef ?? t.orderRef,
-						// Written before the buyer's latest message.
-						stale:
-							latestTheirs !== undefined &&
-							(d.forMessageId ?? 0) < latestTheirs.id,
-						precedents: precedents.filter((p) => d.precedentIds.includes(p.id)),
-					}
-				: null,
-		};
-	});
-	return shaped.sort((a, b) => {
-		if (a.waiting && b.waiting)
-			return a.waiting.due.getTime() - b.waiting.due.getTime();
-		if (a.waiting || b.waiting) return a.waiting ? -1 : 1;
-		return (b.lastAt?.getTime() ?? 0) - (a.lastAt?.getTime() ?? 0);
-	});
-}
-
-export type BuyerThread = Awaited<ReturnType<typeof threadsPage>>[number];
-
-// When an open thread began waiting on us, worked out in the database so
-// counting and drafting read no messages: waitingOn's rule, with messages in
-// the order threadsPage lists them (time, then ID). Null when it isn't.
-// Every column is named with its table: Drizzle leaves them bare in a query
-// of one table, where the inner ones would name themselves.
-function waitingSince() {
+// Whether an open thread waits on us, worked out in the database: a
+// buyer's message with no reply of ours after it that answers (time, then
+// ID). Every column is named with its table: Drizzle leaves them bare in a
+// query of one table, where the inner ones would name themselves.
+function waitingOnUs() {
 	const of = (table: string, column: string) =>
 		sql`${sql.identifier(table)}.${sql.identifier(column)}`;
 	const m = (c: string) => of("waiting_theirs", c);
@@ -468,8 +185,8 @@ function waitingSince() {
 		ANSWERING.map((s) => sql`${s}`),
 		sql`, `,
 	);
-	return sql`(
-		select min(${m("at")}) from ${buyerMessages} as ${sql.identifier("waiting_theirs")}
+	return sql`exists (
+		select 1 from ${buyerMessages} as ${sql.identifier("waiting_theirs")}
 		where ${m("thread_id")} = ${of("buyer_threads", "id")} and ${m("from_buyer")}
 		and not exists (
 			select 1 from ${buyerMessages} as ${sql.identifier("waiting_ours")}
@@ -477,49 +194,64 @@ function waitingSince() {
 			and ${o("status")} in (${answering})
 			and (${o("at")}, ${o("id")}) > (${m("at")}, ${m("id")})
 		)
-	)`.mapWith(buyerMessages.at);
+	)`;
 }
 
-const openIn = (market: Market | null) =>
-	and(
-		isNull(buyerThreads.doneAt),
-		market ? eq(buyerThreads.market, market) : undefined,
-	);
-
-// The open threads waiting on a reply, and when each is due; nothing else
-// read.
-export async function waitingThreads(db: Db, market: Market | null) {
-	const since = waitingSince();
+// Open threads waiting on a reply, by marketplace; zero where none are.
+export async function countWaitingByMarket(
+	db: Db,
+): Promise<Record<MessageMarket, number>> {
 	const rows = await db
-		.select({
-			id: buyerThreads.id,
-			market: buyerThreads.market,
-			orderRef: buyerThreads.orderRef,
-			since,
-		})
+		.select({ market: buyerThreads.market, n: count() })
 		.from(buyerThreads)
-		.where(and(openIn(market), sql`${since} is not null`));
-	return rows.flatMap((t) =>
-		t.since
-			? [
-					{
-						...t,
-						since: t.since,
-						due: new Date(t.since.getTime() + REPLY_WITHIN_MS[t.market]),
-					},
-				]
-			: [],
-	);
+		.where(
+			and(
+				isNull(buyerThreads.doneAt),
+				inArray(buyerThreads.market, [...MESSAGE_MARKETS]),
+				waitingOnUs(),
+			),
+		)
+		.groupBy(buyerThreads.market);
+	const n = (m: MessageMarket) => rows.find((r) => r.market === m)?.n ?? 0;
+	return { amazon: n("amazon"), ebay: n("ebay"), tiktok: n("tiktok") };
 }
 
-// Threads waiting on a reply, for the side list.
-export async function countWaiting(db: Db, market: Market | null) {
-	const [row] = await db
-		.select({ n: count() })
-		.from(buyerThreads)
-		.where(and(openIn(market), sql`${waitingSince()} is not null`));
-	return row?.n ?? 0;
+// Takes every thread waiting on us in a marketplace out of its count, for
+// what needs no answer (a buyer's "thanks"). The ones taken, so it can be
+// undone. A new message from the buyer counts one again.
+export async function clearWaiting(db: Db, market: MessageMarket) {
+	const rows = await db
+		.update(buyerThreads)
+		.set({ doneAt: new Date() })
+		.where(
+			and(
+				isNull(buyerThreads.doneAt),
+				eq(buyerThreads.market, market),
+				waitingOnUs(),
+			),
+		)
+		.returning({ id: buyerThreads.id });
+	return rows.map((r) => r.id);
 }
+
+// Counts cleared threads again: clearWaiting undone.
+export async function unclearThreads(db: Db, ids: number[]) {
+	if (ids.length === 0) return;
+	await db
+		.update(buyerThreads)
+		.set({ doneAt: null })
+		.where(inArray(buyerThreads.id, ids));
+}
+
+// Threads waiting on a reply in one marketplace, or all of them.
+export async function countWaiting(db: Db, market: Market | null) {
+	const by = await countWaitingByMarket(db);
+	if (market === null) return MESSAGE_MARKETS.reduce((n, m) => n + by[m], 0);
+	return isMessageMarket(market) ? by[market] : 0;
+}
+
+export const isMessageMarket = (m: Market): m is MessageMarket =>
+	(MESSAGE_MARKETS as readonly Market[]).includes(m);
 
 // Behind when a source hasn't been read this long. The messages cron runs
 // every five minutes. The mailbox records a read only when there's new mail

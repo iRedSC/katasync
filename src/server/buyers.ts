@@ -1,94 +1,57 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { aiConfigured } from "#/ai/harness";
-import { buyerOrder, orderSummary } from "#/buyers/order";
 import { runBuyerMessages } from "#/buyers/run";
-import { reply } from "#/buyers/send";
 import {
-	logOurs,
+	clearWaiting,
+	countWaitingByMarket,
+	MESSAGE_MARKETS,
 	messageSources,
-	setThreadDone,
-	threadsPage,
-	unlogOurs,
+	unclearThreads,
 } from "#/buyers/threads";
 import { getDb } from "#/db/client";
 import { readMarketMail } from "#/inbox/market-mail";
 
-// The Inbox's Buyers folder: conversations with buyers, answered in place.
-// Only server functions here: a plain export would keep these imports in
-// the browser bundle.
+// The Inbox's Buyers folder: how many buyers wait on a reply in each
+// marketplace, answered there. Only server functions here: a plain export
+// would keep these imports in the browser bundle.
 
-const market = "'shopify' | 'amazon' | 'ebay' | 'tiktok'";
-
-export const listBuyerThreads = createServerFn({ method: "GET" })
-	.validator(type({ view: "'open' | 'done'", market: `${market} | null` }))
-	.handler(async ({ data }) => {
+export const listBuyerMarkets = createServerFn({ method: "GET" }).handler(
+	async () => {
 		const db = getDb();
-		const [threads, sources] = await Promise.all([
-			threadsPage(db, data.view, data.market),
+		const [waiting, sources] = await Promise.all([
+			countWaitingByMarket(db),
 			messageSources(db),
 		]);
-		// The AI is a bonus: without it, no suggestions or Translate show.
-		return { threads, sources, ai: aiConfigured() };
-	});
+		return MESSAGE_MARKETS.map((market) => {
+			const source = sources.find((s) => s.market === market);
+			return {
+				market,
+				waiting: waiting[market],
+				// Whether the count can be trusted right now.
+				source: !source
+					? ({ kind: "behind", checkedAt: null } as const)
+					: source.error
+						? ({ kind: "failed", error: source.error } as const)
+						: source.behind
+							? ({ kind: "behind", checkedAt: source.checkedAt } as const)
+							: ({ kind: "read" } as const),
+			};
+		});
+	},
+);
 
-export type BuyerThreadsPage = Awaited<ReturnType<typeof listBuyerThreads>>;
+export type BuyerMarket = Awaited<ReturnType<typeof listBuyerMarkets>>[number];
 
-// Kept before it's sent; what comes back is how far it got. The browser's
-// key names the reply, so sending it again after a lost answer is the same
-// reply, never a second.
-export const replyToBuyer = createServerFn({ method: "POST" })
-	.validator(
-		type({
-			threadId: "number.integer > 0",
-			text: "string",
-			requestKey: "string.uuid",
-			"fileIds?": "(number.integer > 0)[] <= 5",
-		}),
-	)
-	.handler(async ({ data }) =>
-		reply(
-			getDb(),
-			data.threadId,
-			data.text,
-			data.requestKey,
-			data.fileIds ?? [],
-		),
-	);
+// Clears a marketplace's count: every thread waiting there needs no answer.
+export const clearBuyerMarket = createServerFn({ method: "POST" })
+	.validator(type({ market: "'amazon' | 'ebay' | 'tiktok'" }))
+	.handler(async ({ data }) => ({
+		cleared: await clearWaiting(getDb(), data.market),
+	}));
 
-// A reply sent on the marketplace itself, added without sending, and its
-// undo.
-export const logBuyerReply = createServerFn({ method: "POST" })
-	.validator(
-		type({
-			threadId: "number.integer > 0",
-			text: "string > 0",
-			requestKey: "string.uuid",
-		}),
-	)
-	.handler(async ({ data }) =>
-		logOurs(getDb(), data.threadId, data.text, data.requestKey),
-	);
-
-export const unlogBuyerReply = createServerFn({ method: "POST" })
-	.validator(type({ requestKey: "string.uuid" }))
-	.handler(async ({ data }) => unlogOurs(getDb(), data.requestKey));
-
-// The thread's order and its packages, asked of the carriers as it opens:
-// the one its chat was opened from, when that's given.
-export const getBuyerOrder = createServerFn({ method: "GET" })
-	.validator(
-		type({ threadId: "number.integer > 0", "orderId?": "number.integer > 0" }),
-	)
-	.handler(async ({ data }) =>
-		data.orderId
-			? orderSummary(getDb(), data.orderId)
-			: buyerOrder(getDb(), data.threadId),
-	);
-
-export const setBuyerThreadDone = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0", done: "boolean" }))
-	.handler(async ({ data }) => setThreadDone(getDb(), data.id, data.done));
+export const unclearBuyerThreads = createServerFn({ method: "POST" })
+	.validator(type({ ids: "(number.integer > 0)[]" }))
+	.handler(async ({ data }) => unclearThreads(getDb(), data.ids));
 
 // Reads every source now, as the cron does, so staff needn't wait for it.
 // Amazon's come by email, so the mailbox is read first.
