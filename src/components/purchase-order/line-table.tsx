@@ -243,7 +243,9 @@ export function LineTable({
 							{lines.map((l) => {
 								const set = setFor(l);
 								return (
-									<Fragment key={l.id}>
+									// Kept as the server's id replaces the one made here, so a
+									// new line isn't remounted when the reload lands.
+									<Fragment key={ids.key(l.id)}>
 										<LineRow
 											detail={d}
 											line={l}

@@ -32,7 +32,7 @@ export function Row({
 	onGoToLine: (lineId: number) => void;
 }) {
 	return (
-		<tr className="border-t first:border-t-0">
+		<tr data-product-id={c.productId} className="border-t first:border-t-0">
 			<td className="w-full px-4 py-2 whitespace-normal!">
 				<div className="flex min-w-72 items-center gap-3">
 					<ProductImage src={c.imageUrl} />
