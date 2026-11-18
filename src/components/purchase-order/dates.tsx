@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Tip } from "#/components/ui/tooltip";
 import { formatDay } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { recipientLabel } from "#/purchasing/contacts";
@@ -31,10 +32,12 @@ export function Dates({ detail: d }: { detail: PurchaseOrderDetail }) {
 			<span key="sent">
 				{formatDay(po.sentAt)}
 				{po.sentTo && (
-					<span className="text-muted-foreground" title={po.sentTo.join(", ")}>
-						{" "}
-						to {recipientLabel(po.sentTo, d.supplier.contacts)}
-					</span>
+					<Tip content={po.sentTo.join(", ")}>
+						<span className="text-muted-foreground">
+							{" "}
+							to {recipientLabel(po.sentTo, d.supplier.contacts)}
+						</span>
+					</Tip>
 				)}
 			</span>,
 		]);

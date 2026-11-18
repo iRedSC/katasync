@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Card } from "#/components/page";
 import { SupplierDialog } from "#/components/supplier-dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { formatPhone } from "#/lib/format";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { poData } from "./po-data";
@@ -26,14 +27,14 @@ export function SupplierPanel({ detail: d }: { detail: PurchaseOrderDetail }) {
 					<span className="font-medium">{d.supplier.name}</span>
 					{d.supplier.contacts.length > 0 ? (
 						d.supplier.contacts.map((c) => (
-							<a
-								key={c.email}
-								href={`mailto:${c.email}`}
-								title={c.email}
-								className="truncate text-link hover:underline"
-							>
-								{c.name ?? c.email}
-							</a>
+							<Tip key={c.email} content={c.name && c.email}>
+								<a
+									href={`mailto:${c.email}`}
+									className="truncate text-link hover:underline"
+								>
+									{c.name ?? c.email}
+								</a>
+							</Tip>
 						))
 					) : (
 						<span className="text-muted-foreground">No contacts</span>

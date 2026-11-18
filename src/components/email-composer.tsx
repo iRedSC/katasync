@@ -3,6 +3,7 @@ import { Mail, Paperclip } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { DialogFooter } from "#/components/ui/dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
 import type { SupplierContact } from "#/purchasing/contacts";
 
@@ -91,13 +92,11 @@ export function EmailComposer({
 				<div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
 					To
 					{preview.to.map((c) => (
-						<span
-							key={c.email}
-							title={c.email}
-							className="rounded-full bg-muted px-2 py-0.5 text-foreground"
-						>
-							{c.name ?? c.email}
-						</span>
+						<Tip key={c.email} content={c.name && c.email}>
+							<span className="rounded-full bg-muted px-2 py-0.5 text-foreground">
+								{c.name ?? c.email}
+							</span>
+						</Tip>
 					))}
 				</div>
 				<input
