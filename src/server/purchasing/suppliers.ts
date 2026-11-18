@@ -15,9 +15,11 @@ import {
 	bulkPricesOf,
 	setBulkPrices as saveBulkPrices,
 } from "#/purchasing/bulk-prices";
+import { MAX_CONTACTS } from "#/purchasing/contacts";
 import { DEMAND_DAYS, type LeadTime, leadTimes } from "#/purchasing/forecast";
 import { supplierRows } from "#/purchasing/load";
 import {
+	addContact,
 	setSupplierTerms as setTerms,
 	updateSupplier as updateSupplierDetails,
 } from "#/purchasing/suppliers";
@@ -51,8 +53,11 @@ export const updateSupplier = createServerFn({ method: "POST" })
 			id: "number.integer > 0",
 			name: "string > 0",
 			code: "string > 0",
-			contactName: text,
-			email: type("string.email | null").or("''"),
+			// Checked by cleanContacts: blank rows dropped, the rest real and
+			// distinct addresses.
+			contacts: type({ name: text, email: "string" })
+				.array()
+				.atMostLength(MAX_CONTACTS * 2),
 			phone: text,
 			address1: text,
 			address2: text,
@@ -72,12 +77,18 @@ export const updateSupplier = createServerFn({ method: "POST" })
 		updateSupplierDetails(getDb(), supplierId, values),
 	);
 
-// Just the email, so a PO can be sent from its own page without opening the
+// One contact, so a PO can be sent from its own page without opening the
 // whole supplier form.
-export const setSupplierEmail = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0", email: "string.email" }))
-	.handler(async ({ data }) =>
-		updateSupplierDetails(getDb(), data.id, { email: data.email }),
+export const addSupplierContact = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			id: "number.integer > 0",
+			name: "string | null",
+			email: "string.email",
+		}),
+	)
+	.handler(async ({ data: { id, ...contact } }) =>
+		addContact(getDb(), id, contact),
 	);
 
 // Who sells a product, for its product page: its catalog, every supplier

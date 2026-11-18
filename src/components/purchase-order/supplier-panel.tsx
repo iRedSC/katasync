@@ -24,16 +24,19 @@ export function SupplierPanel({ detail: d }: { detail: PurchaseOrderDetail }) {
 			>
 				<div className="flex flex-col gap-0.5">
 					<span className="font-medium">{d.supplier.name}</span>
-					{d.supplier.contactName && <span>{d.supplier.contactName}</span>}
-					{d.supplier.email ? (
-						<a
-							href={`mailto:${d.supplier.email}`}
-							className="truncate text-link hover:underline"
-						>
-							{d.supplier.email}
-						</a>
+					{d.supplier.contacts.length > 0 ? (
+						d.supplier.contacts.map((c) => (
+							<a
+								key={c.email}
+								href={`mailto:${c.email}`}
+								title={c.email}
+								className="truncate text-link hover:underline"
+							>
+								{c.name ?? c.email}
+							</a>
+						))
 					) : (
-						<span className="text-muted-foreground">No email</span>
+						<span className="text-muted-foreground">No contacts</span>
 					)}
 					{d.supplier.phone && <span>{formatPhone(d.supplier.phone)}</span>}
 					{d.supplier.paymentTerms && (

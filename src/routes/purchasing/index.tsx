@@ -615,10 +615,10 @@ function OrderMenu({ order: o }: { order: OrderRow }) {
 					View PDF
 				</ContextMenuItem>
 			)}
-			{!done && o.supplierEmail && (
+			{!done && o.supplierEmails.length > 0 && (
 				<ContextMenuItem
 					onSelect={() => {
-						window.location.href = `mailto:${o.supplierEmail}?subject=${encodeURIComponent(`Purchase order ${o.id}`)}`;
+						window.location.href = `mailto:${o.supplierEmails.join(",")}?subject=${encodeURIComponent(`Purchase order ${o.id}`)}`;
 					}}
 				>
 					<Mail />

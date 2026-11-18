@@ -8,31 +8,40 @@ import {
 	PopoverTrigger,
 } from "#/components/ui/popover";
 import { optimism, type Patch } from "#/lib/optimism";
+import type { SupplierContact } from "#/purchasing/contacts";
 import {
+	addSupplierContact,
 	type PurchaseOrderDetail,
-	setSupplierEmail,
 } from "#/server/purchasing";
 
-// Stands in for Send while the supplier has no email: one field, and once
-// saved the button is Send again. Ordering some other way stays under More.
+const box =
+	"h-8 w-full rounded-lg border border-input bg-white px-2 outline-none focus:border-ring";
+
+// Stands in for Send while the supplier has no contacts: a name and email,
+// and once saved the button is Send again. More contacts go in the supplier
+// form. Ordering some other way stays under More.
 export function AddEmail({
 	supplier,
 	patch,
 }: {
 	supplier: PurchaseOrderDetail["supplier"];
-	patch: (email: string) => Patch;
+	patch: (contact: SupplierContact) => Patch;
 }) {
 	const [open, setOpen] = useState(false);
 	async function submit(e: FormEvent<HTMLFormElement>) {
 		e.preventDefault();
-		const email = String(new FormData(e.currentTarget).get("email")).trim();
+		const form = new FormData(e.currentTarget);
+		const contact = {
+			name: String(form.get("name")).trim() || null,
+			email: String(form.get("email")).trim(),
+		};
 		setOpen(false);
 		const r = await optimism.change({
-			label: `${supplier.name}'s email`,
-			patch: patch(email),
-			send: () => setSupplierEmail({ data: { id: supplier.id, email } }),
+			label: `${supplier.name}'s contact`,
+			patch: patch(contact),
+			send: () => addSupplierContact({ data: { id: supplier.id, ...contact } }),
 		});
-		if (r) toast.success(`Saved ${supplier.name}'s email`);
+		if (r) toast.success(`Saved ${supplier.name}'s contact`);
 	}
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
@@ -44,17 +53,23 @@ export function AddEmail({
 			</PopoverTrigger>
 			<PopoverContent className="w-72 p-3">
 				<form onSubmit={submit} className="flex flex-col gap-2">
-					<label htmlFor="supplier-email" className="font-medium">
-						{supplier.name}'s email
-					</label>
+					<span className="font-medium">Who gets {supplier.name}'s POs</span>
 					<input
-						id="supplier-email"
 						name="email"
 						type="email"
 						required
-						// biome-ignore lint/a11y/noAutofocus: the popover opens for this one field
+						placeholder="Email"
+						aria-label="Email"
+						// biome-ignore lint/a11y/noAutofocus: the popover opens for this
 						autoFocus
-						className="h-8 w-full rounded-lg border border-input bg-white px-2 outline-none focus:border-ring"
+						className={box}
+					/>
+					<input
+						name="name"
+						placeholder="Name (optional)"
+						aria-label="Name"
+						autoComplete="off"
+						className={box}
 					/>
 					<Button type="submit" size="sm" className="self-end">
 						Save

@@ -10,7 +10,14 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { chunks, readCsv } from "#/import/sumtracker";
+import {
+	cleanContacts,
+	contactProblems,
+	type SupplierContact,
+	splitAddresses,
+} from "#/purchasing/contacts";
 import { PurchaseOrderError } from "#/purchasing/orders";
+import { setContacts } from "#/purchasing/suppliers";
 import { EACH, unitName } from "#/purchasing/units";
 
 // One-time import of Sumtracker's suppliers.csv and primary-suppliers.csv into
@@ -52,7 +59,9 @@ const linkRow = type({
 });
 
 export type SupplierImportPlan = {
-	suppliers: (typeof suppliers.$inferInsert)[];
+	suppliers: (typeof suppliers.$inferInsert & {
+		contacts: SupplierContact[];
+	})[];
 	links: {
 		sku: string;
 		supplierCode: string;
@@ -148,11 +157,30 @@ export function planSupplierImport(
 				`${r.code}: minimum order set to $${minimum} from its notes ("${r.notes}")`,
 			);
 		const lead = Number(r.lead_time);
+		// Sumtracker's one email field sometimes holds several addresses.
+		const typed = splitAddresses(r.email);
+		const problems = contactProblems(typed);
+		const bad = typed.filter((_, i) => problems[i] === "Not an email address");
+		if (bad.length > 0)
+			warnings.push(
+				`${r.code}: ${bad.map((c) => `"${c.email.trim()}"`).join(", ")} isn't an email address; kept in its notes`,
+			);
+		const name = [r.first_name, r.last_name].join(" ").trim() || null;
+		const contacts = cleanContacts(
+			typed.filter((_, i) => problems[i] === null),
+		).map((c, i) => (i === 0 ? { ...c, name } : c));
+		// Kept in the notes, as the contacts migration does, so nothing typed
+		// into Sumtracker is lost: a name with no address to go with, and what
+		// wasn't an address.
+		const kept = [
+			r.notes.trim(),
+			name && contacts.length === 0 ? `Contact: ${name}` : "",
+			bad.length > 0 ? `Email: ${r.email.trim()}` : "",
+		].filter(Boolean);
 		return {
 			code: r.code,
 			name: r.company_name.trim() || r.code,
-			contactName: [r.first_name, r.last_name].join(" ").trim() || null,
-			email: r.email.trim() || null,
+			contacts,
 			phone: r.phone.trim() || null,
 			address1: r.address_line_1.trim() || null,
 			address2: r.address_line_2.trim() || null,
@@ -161,7 +189,7 @@ export function planSupplierImport(
 			postalCode: r.pincode.trim() || null,
 			country: r.country.trim() || null,
 			paymentTerms: r.payment_terms.trim() || null,
-			notes: r.notes.trim() || null,
+			notes: kept.join("\n") || null,
 			poNotes: r.po_notes.trim() || null,
 			...(r.lead_time.trim() && lead > 0 ? { leadTimeDays: lead } : {}),
 			...(minimum !== null ? { minimumOrder: minimum } : {}),
@@ -170,7 +198,9 @@ export function planSupplierImport(
 	const codes = new Set(planned.map((s) => s.code));
 	if (codes.size !== planned.length)
 		errors.push("suppliers.csv has duplicate codes");
-	const noEmail = planned.filter((s) => !s.email).map((s) => s.code);
+	const noEmail = planned
+		.filter((s) => s.contacts.length === 0)
+		.map((s) => s.code);
 	if (noEmail.length > 0)
 		warnings.push(
 			`No email for ${noEmail.join(", ")}; their POs can't be sent until one is added`,
@@ -292,8 +322,15 @@ export async function applySupplierImport(db: Db, plan: SupplierImportPlan) {
 				`Database already has ${existing} suppliers; import needs none`,
 			);
 
-		const rows = await tx.insert(suppliers).values(plan.suppliers).returning();
+		const rows = await tx
+			.insert(suppliers)
+			.values(plan.suppliers.map(({ contacts: _, ...s }) => s))
+			.returning();
 		const supplierIds = new Map(rows.map((s) => [s.code, s.id]));
+		for (const s of plan.suppliers) {
+			const id = supplierIds.get(s.code);
+			if (id !== undefined) await setContacts(tx, id, s.contacts);
+		}
 
 		// Links point at units, so the ones the export uses must exist first.
 		const wanted = [...new Set(plan.links.map((l) => l.unit))].filter(

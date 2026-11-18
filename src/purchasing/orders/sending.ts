@@ -5,24 +5,25 @@ import {
 	purchaseOrderLines,
 	purchaseOrders,
 } from "#/db/schema";
+import type { Recipients } from "#/purchasing/contacts";
 import { leadTimes } from "#/purchasing/forecast";
 import { lockOrder, PurchaseOrderError, poName } from "./lock";
 import { splitSets } from "./set-parts";
 
-// Puts a draft on order. sentTo is where it went, or null when it was ordered
-// some other way (phone, their website). `deliver`, when given, sends it and
-// returns the address it went to. It runs inside the transaction with the PO
+// Puts a draft on order. sentTo is who it went to, or null when it was
+// ordered some other way (phone, their website). `deliver`, when given, sends
+// it and returns who it went to. It runs inside the transaction with the PO
 // locked and gets that transaction, so what it sends is exactly what's saved
 // as sent; if it fails, the PO stays a draft.
 export async function markSent(
 	db: Db,
 	input: {
 		purchaseOrderId: number;
-		sentTo?: string | null;
+		sentTo?: Recipients | null;
 		now?: Date;
-		deliver?: (tx: Db) => Promise<string>;
+		deliver?: (tx: Db) => Promise<Recipients>;
 	},
-): Promise<string | null> {
+): Promise<Recipients | null> {
 	const now = input.now ?? new Date();
 	return db.transaction(async (tx) => {
 		const po = await lockOrder(tx, input.purchaseOrderId, [
@@ -71,7 +72,7 @@ export async function markSent(
 			.set({
 				status: "sent",
 				sentAt: now,
-				sentTo,
+				sentTo: sentTo && [...sentTo],
 				expectedAt: new Date(now.getTime() + lead.days * 86_400_000),
 			})
 			.where(eq(purchaseOrders.id, po.id));

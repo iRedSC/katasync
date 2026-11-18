@@ -1,3 +1,4 @@
+import type { Recipients } from "#/purchasing/contacts";
 import { poAddress } from "#/purchasing/inbox/graph";
 
 // Emails a PO through Resend (https://resend.com/docs/api-reference/emails).
@@ -22,7 +23,8 @@ export function emailConfigured() {
 export async function sendEmail(message: {
 	// The PO it's about, whose address replies go to.
 	purchaseOrderId: number;
-	to: string;
+	// All in To, so they see each other and can reply-all.
+	to: Recipients;
 	subject: string;
 	text: string;
 	attachments: { filename: string; content: Buffer }[];
@@ -43,7 +45,7 @@ export async function sendEmail(message: {
 		},
 		body: JSON.stringify({
 			from,
-			to: [message.to],
+			to: message.to,
 			...(replyTo ? { reply_to: replyTo } : {}),
 			...(copyTo ? { bcc: [copyTo] } : {}),
 			subject: message.subject,
@@ -59,7 +61,7 @@ export async function sendEmail(message: {
 			message?: string;
 		} | null;
 		throw new Error(
-			`Email to ${message.to} failed: ${body?.message ?? res.statusText}`,
+			`Email to ${message.to.join(", ")} failed: ${body?.message ?? res.statusText}`,
 		);
 	}
 }

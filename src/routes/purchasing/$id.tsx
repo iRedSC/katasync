@@ -286,13 +286,16 @@ function PurchaseOrderPage() {
 						</Button>
 					)}
 					{draft &&
-						(d.supplier.email === null ? (
+						(d.supplier.contacts.length === 0 ? (
 							<AddEmail
 								supplier={d.supplier}
-								patch={(email) =>
+								patch={(contact) =>
 									poData.patch(po.id, (data) => ({
 										...data,
-										supplier: { ...data.supplier, email },
+										supplier: {
+											...data.supplier,
+											contacts: [...data.supplier.contacts, contact],
+										},
 									}))
 								}
 							/>
@@ -300,7 +303,7 @@ function PurchaseOrderPage() {
 							<Tip
 								content={
 									d.emailConfigured
-										? `Email the PDF to ${d.supplier.email}`
+										? `Email the PDF to ${d.supplier.contacts.map((c) => c.email).join(", ")}`
 										: "Email isn't set up here (RESEND_API_KEY and PO_EMAIL_FROM). Download the PDF, order another way, and mark it sent."
 								}
 							>

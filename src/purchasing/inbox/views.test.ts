@@ -21,15 +21,24 @@ describe("likelihood", () => {
 	};
 
 	it("puts a PO the email names first", () => {
-		expect(likelihood(email, { id: 42, supplierEmail: "x@other.com" })).toBe(
+		expect(likelihood(email, { id: 42, supplierEmails: ["x@other.com"] })).toBe(
 			"mentions",
 		);
 	});
 
 	it("falls back to the supplier's domain", () => {
-		expect(likelihood(email, { id: 7, supplierEmail: "orders@ACME.com" })).toBe(
-			"supplier",
-		);
-		expect(likelihood(email, { id: 7, supplierEmail: null })).toBeNull();
+		expect(
+			likelihood(email, { id: 7, supplierEmails: ["orders@ACME.com"] }),
+		).toBe("supplier");
+		expect(likelihood(email, { id: 7, supplierEmails: [] })).toBeNull();
+	});
+
+	it("matches any of the supplier's contacts' domains", () => {
+		expect(
+			likelihood(email, {
+				id: 7,
+				supplierEmails: ["rep@gmail.com", "ap@acme.com"],
+			}),
+		).toBe("supplier");
 	});
 });

@@ -1,7 +1,13 @@
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { productComponents, supplierOffers, suppliers } from "#/db/schema";
+import {
+	productComponents,
+	supplierContacts,
+	supplierOffers,
+	suppliers,
+} from "#/db/schema";
 import { setOfferTerms } from "#/purchasing/catalogs";
+import { cleanContacts, type SupplierContact } from "#/purchasing/contacts";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
 // The suppliers' own details, and their terms for what they sell.
@@ -49,8 +55,8 @@ export type SupplierFields = {
 	name: string;
 	// Short enough for a badge, e.g. "FCI".
 	code: string;
-	contactName: string | null;
-	email: string | null;
+	// Everyone its emails go to, in order. Saving replaces the whole list.
+	contacts: readonly SupplierContact[];
 	phone: string | null;
 	address1: string | null;
 	address2: string | null;
@@ -70,8 +76,9 @@ export type SupplierFields = {
 export async function updateSupplier(
 	db: Db,
 	id: number,
-	fields: Partial<SupplierFields>,
+	{ contacts, ...fields }: Partial<SupplierFields>,
 ) {
+	const clean = contacts && cleanContacts(contacts);
 	const blank = (v: string | null | undefined) =>
 		v === undefined ? undefined : v?.trim() || null;
 	for (const key of ["leadTimeDays", "coverDays"] as const) {
@@ -95,8 +102,6 @@ export async function updateSupplier(
 			...fields,
 			name: fields.name?.trim(),
 			code,
-			contactName: blank(fields.contactName),
-			email: blank(fields.email),
 			phone: blank(fields.phone),
 			address1: blank(fields.address1),
 			address2: blank(fields.address2),
@@ -109,13 +114,60 @@ export async function updateSupplier(
 			poNotes: blank(fields.poNotes),
 		}).filter(([, v]) => v !== undefined),
 	);
-	if (Object.keys(set).length === 0) return;
-	const updated = await db
-		.update(suppliers)
-		.set(set)
-		.where(eq(suppliers.id, id))
-		.returning({ id: suppliers.id });
-	if (updated.length === 0) throw new PurchaseOrderError("No such supplier");
+	await db.transaction(async (tx) => {
+		const [found] =
+			Object.keys(set).length > 0
+				? await tx
+						.update(suppliers)
+						.set(set)
+						.where(eq(suppliers.id, id))
+						.returning({ id: suppliers.id })
+				: await tx
+						.select({ id: suppliers.id })
+						.from(suppliers)
+						.where(eq(suppliers.id, id))
+						.for("update");
+		if (!found) throw new PurchaseOrderError("No such supplier");
+		if (clean) await setContacts(tx, id, clean);
+	});
+}
+
+// Replaces a supplier's contacts with these, in this order.
+export async function setContacts(
+	db: Db,
+	supplierId: number,
+	contacts: readonly SupplierContact[],
+) {
+	await db
+		.delete(supplierContacts)
+		.where(eq(supplierContacts.supplierId, supplierId));
+	if (contacts.length > 0)
+		await db
+			.insert(supplierContacts)
+			.values(contacts.map((c, position) => ({ ...c, supplierId, position })));
+}
+
+// Adds one contact after the others, for sending a PO from its own page
+// without opening the whole supplier form.
+export async function addContact(
+	db: Db,
+	supplierId: number,
+	contact: SupplierContact,
+) {
+	await db.transaction(async (tx) => {
+		const [found] = await tx
+			.select({ id: suppliers.id })
+			.from(suppliers)
+			.where(eq(suppliers.id, supplierId))
+			.for("update");
+		if (!found) throw new PurchaseOrderError("No such supplier");
+		const had = await tx
+			.select({ name: supplierContacts.name, email: supplierContacts.email })
+			.from(supplierContacts)
+			.where(eq(supplierContacts.supplierId, supplierId))
+			.orderBy(supplierContacts.position);
+		await setContacts(tx, supplierId, cleanContacts([...had, contact]));
+	});
 }
 
 // supplierByRef finds a supplier by code or name, ignoring case, so a code

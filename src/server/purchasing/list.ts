@@ -9,6 +9,7 @@ import {
 	purchaseOrderTracking,
 	suppliers,
 } from "#/db/schema";
+import { contactEmailsColumn } from "#/purchasing/contacts";
 import { discountOf, lineCents } from "#/purchasing/discount";
 import { countUnfiled } from "#/purchasing/inbox/ingest";
 import { backOrderedUnits, receivedByLine } from "#/purchasing/load";
@@ -133,7 +134,7 @@ function orderRows(
 				status: purchaseOrders.status,
 				supplierId: suppliers.id,
 				supplierName: suppliers.name,
-				supplierEmail: suppliers.email,
+				supplierEmails: contactEmailsColumn,
 				sentAt: purchaseOrders.sentAt,
 				expectedAt: purchaseOrders.expectedAt,
 				closedAt: purchaseOrders.closedAt,

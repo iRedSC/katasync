@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
+import { greetingFor, recipientsOf } from "#/purchasing/contacts";
 import {
 	type DamageReportItem,
 	damagesOf,
@@ -12,7 +13,6 @@ import {
 } from "#/purchasing/damage";
 import { sendEmail } from "#/purchasing/email";
 import {
-	greetingFor,
 	renderTemplate,
 	templateFor,
 	type Values,
@@ -72,7 +72,7 @@ function damageEmailValues(
 ): Values<"damage_report"> {
 	const photos = items.reduce((n, i) => n + i.photos, 0);
 	return {
-		greeting: greetingFor(po.supplier.contactName),
+		greeting: greetingFor(po.supplier.contacts),
 		po: String(po.order.id),
 		supplier: po.supplier.name,
 		from: po.location.shipFromName ?? po.location.name,
@@ -131,7 +131,7 @@ export const previewDamageReport = createServerFn({ method: "POST" })
 		}));
 		const template = await templateFor(db, "damage_report");
 		return {
-			to: po.supplier.email,
+			to: po.supplier.contacts,
 			...renderTemplate(template, damageEmailValues(po, items)),
 			attachments: pending.flatMap((d) =>
 				d.photoIds.map((_, n) => `${d.sku}-${n + 1}`),
@@ -157,10 +157,10 @@ export const sendPurchaseDamageReport = createServerFn({ method: "POST" })
 			remedies: data.remedies,
 			deliver: async (tx, items) => {
 				const po = await loadOrder(tx, data.purchaseOrderId);
-				const to = po.supplier.email;
+				const to = recipientsOf(po.supplier.contacts);
 				if (!to)
 					throw new PurchaseOrderError(
-						`${po.supplier.name} has no email. Add one in Suppliers.`,
+						`${po.supplier.name} has no contacts. Add one in Suppliers.`,
 					);
 				const names = photoFiles(items);
 				await sendEmail({

@@ -16,7 +16,7 @@ const files = {
 	suppliers: [
 		suppliersHeader,
 		"1,CANAM,USD,CanAm Tools,Linda,Adimora,N30,Free Shipping Min - $1500,,sales@canamtool.com,555,1 Main St,,Erie,PA,US,16501,21,",
-		"2,MMC,USD,,,,,,,,,,,,,,,,",
+		"2,MMC,USD,,Sam,,,,,call Sam,,,,,,,,,",
 	].join("\n"),
 	links: [
 		linksHeader,
@@ -49,13 +49,17 @@ describe("planSupplierImport", () => {
 		expect(plan.suppliers[0]).toMatchObject({
 			code: "CANAM",
 			name: "CanAm Tools",
-			contactName: "Linda Adimora",
-			email: "sales@canamtool.com",
+			contacts: [{ name: "Linda Adimora", email: "sales@canamtool.com" }],
 			leadTimeDays: 21,
 			minimumOrder: 1500,
 		});
 		// No company name falls back to the code; defaults stay in the database.
 		expect(plan.suppliers[1]).toMatchObject({ code: "MMC", name: "MMC" });
+		// Nothing typed is lost: a name with no address, and what isn't one.
+		expect(plan.suppliers[1]).toMatchObject({
+			contacts: [],
+			notes: "Contact: Sam\nEmail: call Sam",
+		});
 		expect(plan.suppliers[1]).not.toHaveProperty("leadTimeDays");
 		expect(plan.links).toEqual([
 			{
@@ -121,6 +125,7 @@ describe("planSupplierImport", () => {
 		]);
 		expect(plan.warnings).toEqual([
 			'CANAM: minimum order set to $1500 from its notes ("Free Shipping Min - $1500")',
+			`MMC: "call Sam" isn't an email address; kept in its notes`,
 			"No email for MMC; their POs can't be sent until one is added",
 			'TAPE: pack size "twelve" isn\'t a whole number from 1 to 2147483647; bought in EACH instead',
 			"TAPE: ignored the supplier price $5, which was for a pack that couldn't be read",
@@ -142,7 +147,8 @@ describe("planSupplierImport", () => {
 			);
 		const first = (uom: string, pack: string, cost = "200") => {
 			const plan = link(uom, pack, cost);
-			return { ...plan.links[0], warnings: plan.warnings.slice(2) };
+			// Past the suppliers' own warnings.
+			return { ...plan.links[0], warnings: plan.warnings.slice(3) };
 		};
 		const each = { unit: "EACH", packSize: 1, warnings: [] };
 		expect(first("", "")).toMatchObject(each);

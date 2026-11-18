@@ -102,7 +102,7 @@ describe("a PO from draft to received", () => {
 					.from(schema.purchaseOrderLines)
 					.where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
 				expect(lines.map((l) => l.productId)).not.toContain(set);
-				return "orders@canam.example";
+				return ["orders@canam.example"] as const;
 			},
 		});
 		expect(await linesOf(id)).toMatchObject([
@@ -400,7 +400,7 @@ describe("a PO from draft to received", () => {
 		await expect(
 			markSent(db, {
 				purchaseOrderId: id,
-				sentTo: "a@b.c",
+				sentTo: ["a@b.c"],
 				deliver: async () => {
 					throw new Error("email down");
 				},
@@ -421,11 +421,14 @@ describe("a PO from draft to received", () => {
 					.from(schema.purchaseOrderLines)
 					.where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
 				expect(lines).toHaveLength(2);
-				return "orders@canam.example";
+				return ["orders@canam.example", "ap@canam.example"] as const;
 			},
 		});
-		expect(sentTo).toBe("orders@canam.example");
-		expect((await getPo(id)).sentTo).toBe("orders@canam.example");
+		expect(sentTo).toEqual(["orders@canam.example", "ap@canam.example"]);
+		expect((await getPo(id)).sentTo).toEqual([
+			"orders@canam.example",
+			"ap@canam.example",
+		]);
 	});
 
 	test("knows which PO a receipt's ledger batch belongs to", async () => {

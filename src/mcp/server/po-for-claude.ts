@@ -52,7 +52,7 @@ export async function orderForClaude(db: Db, id: number) {
 		supplier: {
 			code: po.supplier.code,
 			name: po.supplier.name,
-			email: po.supplier.email,
+			contacts: po.supplier.contacts,
 			paymentTerms: po.supplier.paymentTerms,
 		},
 		deliverTo: po.location.name,

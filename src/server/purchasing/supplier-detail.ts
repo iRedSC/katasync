@@ -4,6 +4,7 @@ import {
 	and,
 	desc,
 	eq,
+	getTableColumns,
 	gte,
 	inArray,
 	isNull,
@@ -23,6 +24,7 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { listCatalogs } from "#/purchasing/catalogs";
+import { contactsColumn } from "#/purchasing/contacts";
 import { discountOf } from "#/purchasing/discount";
 import { leadTimes } from "#/purchasing/forecast";
 import { receivedByLine, supplierRows } from "#/purchasing/load";
@@ -155,7 +157,10 @@ export const getSupplierDetail = createServerFn({ method: "GET" })
 		const received = receivedByLine(db);
 		const [[supplier], lead, catalogs, lines, orders, packages, selling] =
 			await Promise.all([
-				db.select().from(suppliers).where(eq(suppliers.id, id)),
+				db
+					.select({ ...getTableColumns(suppliers), contacts: contactsColumn })
+					.from(suppliers)
+					.where(eq(suppliers.id, id)),
 				leadTimes(db, [id]),
 				listCatalogs(db),
 				orderedLines(

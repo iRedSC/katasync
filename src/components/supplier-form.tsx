@@ -9,10 +9,15 @@ import {
 import { toast } from "sonner";
 import { AddressInput } from "#/components/address-input";
 import { shake } from "#/components/shake";
+import {
+	type ContactsHandle,
+	SupplierContactsInput,
+} from "#/components/supplier-contacts-input";
 import { Button } from "#/components/ui/button";
 import { optimism, type Patch } from "#/lib/optimism";
 import { caretAfterDigits, digitsBefore, formatPhoneInput } from "#/lib/phone";
 import { cn } from "#/lib/utils";
+import type { SupplierContact } from "#/purchasing/contacts";
 import {
 	DEMAND_DAYS,
 	type LeadTime,
@@ -47,6 +52,22 @@ const TERMS = [
 	"Prepaid",
 	"Credit card",
 ];
+
+// Whether the rows hold the saved contacts, blank rows aside.
+const sameContacts = (
+	rows: readonly { name: string | null; email: string }[],
+	saved: readonly SupplierContact[],
+) => {
+	const typed = rows.filter((r) => r.name?.trim() || r.email.trim());
+	return (
+		typed.length === saved.length &&
+		typed.every(
+			(r, i) =>
+				r.email.trim() === saved[i].email &&
+				(r.name?.trim() || null) === saved[i].name,
+		)
+	);
+};
 
 // Why the server would refuse these details, so the form can say so before the
 // page shows them as saved.
@@ -110,6 +131,12 @@ export function SupplierForm({
 		[],
 	);
 
+	const contacts = useRef<ContactsHandle>(null);
+	// The contact rows as they stand, compared with what's saved for dirty.
+	const contactRows = useRef<{ name: string | null; email: string }[]>([
+		...s.contacts,
+	]);
+
 	// Dirty while any field differs from what was saved, so undoing an edit by
 	// hand counts as clean again.
 	const checkDirty = () =>
@@ -119,7 +146,7 @@ export function SupplierForm({
 					(el instanceof HTMLInputElement ||
 						el instanceof HTMLTextAreaElement) &&
 					el.value !== el.defaultValue,
-			),
+			) || !sameContacts(contactRows.current, s.contacts),
 		);
 
 	// Fills in a picked address once its lookup finishes, if it's still wanted:
@@ -166,11 +193,12 @@ export function SupplierForm({
 		// As the server stores them: blanks become empty, and the name is trimmed.
 		const blank = (k: string) => str(k).trim() || null;
 		const phone = blank("phone");
+		const checked = contacts.current?.check();
+		if (!checked) return;
 		const values = {
 			name: str("name").trim(),
 			code: str("code").trim(),
-			contactName: blank("contactName"),
-			email: blank("email"),
+			contacts: checked,
 			phone: phone && formatPhoneInput(phone).trim(),
 			address1: blank("address1"),
 			address2: blank("address2"),
@@ -234,20 +262,21 @@ export function SupplierForm({
 							className={box}
 						/>
 					</Field>
-					<Field label="Contact person">
-						<input
-							name="contactName"
-							defaultValue={s.contactName ?? ""}
-							autoComplete="off"
-							className={box}
-						/>
-					</Field>
-					<Field label="Email POs to">
-						<EmailInput defaultValue={s.email ?? ""} />
-					</Field>
 					<Field label="Phone">
 						<PhoneInput defaultValue={s.phone ?? ""} />
 					</Field>
+					<div className="flex flex-col gap-1 md:col-span-2">
+						<span className="text-muted-foreground">Email POs to</span>
+						<SupplierContactsInput
+							defaultValue={s.contacts}
+							handle={contacts}
+							className={box}
+							onChange={(rows) => {
+								contactRows.current = rows;
+								checkDirty();
+							}}
+						/>
+					</div>
 				</Section>
 
 				<Section title="Address">
@@ -478,33 +507,6 @@ function Adorned({
 				</span>
 			)}
 		</div>
-	);
-}
-
-// Turns red once left holding something that isn't an email, and says so.
-function EmailInput({ defaultValue }: { defaultValue: string }) {
-	const [bad, setBad] = useState(false);
-	const id = useId();
-	return (
-		<>
-			<input
-				name="email"
-				type="email"
-				defaultValue={defaultValue}
-				autoComplete="off"
-				placeholder="orders@supplier.com"
-				aria-invalid={bad}
-				aria-describedby={bad ? id : undefined}
-				onBlur={(e) => setBad(!e.currentTarget.validity.valid)}
-				onInput={(e) => bad && setBad(!e.currentTarget.validity.valid)}
-				className={box}
-			/>
-			{bad && (
-				<span id={id} className="text-xs text-critical-text">
-					Not an email address
-				</span>
-			)}
-		</>
 	);
 }
 
