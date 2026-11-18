@@ -275,7 +275,7 @@ export async function readSalesReport(db: Db, period: Period) {
 	// Orders placed in the period, with where they were sold and their tax.
 	const placed = sql`
 		placed as (
-			select p.*, o.sold_in_store, o.ship_address1, o.ship_region, o.ship_country,
+			select p.*, o.sold_in_store, o.pickup, o.ship_address1, o.ship_region, o.ship_country,
 				o.tax_remitted_by,
 				case when p.sold_on = 'shopify' and o.sold_in_store then 'retail'
 					when p.sold_on = 'shopify' and o.sales_channel = ${SHOP_APP} then 'shop'
@@ -325,7 +325,7 @@ export async function readSalesReport(db: Db, period: Period) {
 		rowsOf<JurisdictionRow>(
 			db.execute(sql`
 				with ${placed}
-				select case when p.sold_in_store then 'US'
+				select case when p.sold_in_store or p.pickup then 'US'
 						else coalesce(upper(nullif(btrim(p.ship_country), '')), 'US') end as country,
 					t.jurisdiction, t.rate::float8 as rate,
 					count(distinct p.order_id)::int as orders,
@@ -410,8 +410,11 @@ export async function readSalesReport(db: Db, period: Period) {
 		),
 		sql`, `,
 	);
-	// An address missing its province still went somewhere, so only an order
-	// with no address at all (country, province or street) is a pickup.
+	// A Shopify local pickup is one, whatever address it carries. Otherwise
+	// an address missing its province still went somewhere, so only an order
+	// with no address at all (country, province or street) counts with them
+	// (a draft order, or a pickup synced before katasync knew pickups).
+	// Snapshots keep the key "no_address", shown as Pickup.
 	const states = await rowsOf<StateRow>(
 		db.execute(sql`
 		with ${placed},
@@ -419,7 +422,7 @@ export async function readSalesReport(db: Db, period: Period) {
 		sited as (
 			select p.*,
 				case when sold_in_store then 'in_store'
-					when coalesce(nullif(btrim(ship_country), ''), nullif(btrim(ship_region), ''),
+					when pickup or coalesce(nullif(btrim(ship_country), ''), nullif(btrim(ship_region), ''),
 						nullif(btrim(ship_address1), '')) is null then 'no_address'
 					else 'shipped' end as how,
 				(select st.code from order_taxes t

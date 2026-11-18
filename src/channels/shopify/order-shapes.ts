@@ -37,6 +37,14 @@ export const orderNode = type({
 		countryCodeV2: "string | null",
 		phone: "string | null",
 	}).or("null"),
+	// Who to hand a pickup to, which has no shipping address.
+	billingAddress: type({ name: "string | null" }).or("null"),
+	// How each part of it reaches the buyer: PICK_UP for local pickup.
+	fulfillmentOrders: {
+		nodes: type({
+			deliveryMethod: type({ methodType: "string" }).or("null"),
+		}).array(),
+	},
 	lineItems: {
 		pageInfo: { hasNextPage: "boolean", "endCursor?": "string | null" },
 		nodes: type({
@@ -68,6 +76,8 @@ export const ORDER_FIELDS = `
 	totalShippingPriceSet { shopMoney { amount } }
 	currentTaxLines { title rate priceSet { shopMoney { amount } } }
 	shippingAddress { name address1 address2 city provinceCode zip countryCodeV2 phone }
+	billingAddress { name }
+	fulfillmentOrders(first: 10) { nodes { deliveryMethod { methodType } } }
 	lineItems(first: 30) {
 		pageInfo { hasNextPage endCursor }
 		nodes {

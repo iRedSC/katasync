@@ -670,6 +670,15 @@ export const orders = pgTable(
 		// Rung up at our retail store (Shopify POS): its stock comes off the
 		// store's shelf rather than the warehouse's.
 		soldInStore: boolean().notNull().default(false),
+		// The buyer collects it at our store (Shopify local pickup): every
+		// fulfillment order's delivery method is PICK_UP. It's never packed,
+		// labeled or given a pin; it waits on To ship to be marked ready
+		// (Shopify emails the buyer) and then picked up. From the channel on
+		// every sync.
+		pickup: boolean().notNull().default(false),
+		// When katasync told Shopify it's ready for pickup. Only katasync sets
+		// it; a sync clears it if the order stops being a pickup.
+		readyForPickupAt: timestamp({ withTimezone: true }),
 		financialStatus: text(),
 		customerName: text(),
 		// The buyer's account on the marketplace (TikTok's user_id). TikTok hides
@@ -733,6 +742,10 @@ export const orders = pgTable(
 		check(
 			"orders_drop_ship_no_pin",
 			sql`${t.dropShipAt} is null or ${t.pin} is null`,
+		),
+		check(
+			"orders_ready_is_pickup",
+			sql`${t.readyForPickupAt} is null or ${t.pickup}`,
 		),
 	],
 );

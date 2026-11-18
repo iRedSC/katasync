@@ -124,6 +124,7 @@ export function amazonToChannelOrder(
 		fulfillmentStatus,
 		fulfilledByChannel: fba,
 		soldInStore: false,
+		pickup: false,
 		// Pending means Amazon hasn't confirmed payment yet.
 		financialStatus: order.OrderStatus === "Pending" ? "PENDING" : "PAID",
 		// Buyer names need Amazon's restricted-data token; city and state don't.

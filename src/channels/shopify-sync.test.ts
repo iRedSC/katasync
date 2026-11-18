@@ -32,6 +32,8 @@ const node = (
 	totalShippingPriceSet: money("0.00"),
 	currentTaxLines: [],
 	shippingAddress: null,
+	billingAddress: null,
+	fulfillmentOrders: { nodes: [] },
 	lineItems: {
 		pageInfo: { hasNextPage: false, endCursor: null },
 		nodes: [

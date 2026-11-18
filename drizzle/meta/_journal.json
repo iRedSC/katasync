@@ -1310,6 +1310,13 @@
       "when": 1794494125933,
       "tag": "0186_drop_buyer_replies",
       "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "7",
+      "when": 1795035209707,
+      "tag": "0187_pickup_orders",
+      "breakpoints": true
     }
   ]
 }

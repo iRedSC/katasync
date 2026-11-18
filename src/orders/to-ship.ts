@@ -49,9 +49,13 @@ export const needsShipping = sql<boolean>`(
 )`;
 
 // Still to ship, from our own shelf: everything that gets a pin, a label,
-// and a printed invoice. A drop-ship still needs shipping, by its supplier,
-// so it stays on To ship but is never packed here.
-export const needsPacking = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is null)`;
+// and a box. A drop-ship still needs shipping, by its supplier, and a pickup
+// by the buyer collecting it, so both stay on To ship but are never packed.
+export const needsPacking = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is null and not ${orders.pickup})`;
+
+// Waiting for its buyer to collect it at our store: picked and set aside,
+// never boxed. Its slip still prints, marked as a pickup.
+export const awaitsPickup = sql<boolean>`(${needsShipping} and ${orders.pickup} and ${orders.dropShipAt} is null)`;
 
 // An order whose slip is just its lines: katasync has never made a dispatch
 // for it, and the marketplace says nothing of it shipped (a line with no
@@ -71,8 +75,9 @@ export const plain = sql<boolean>`(
 // Catalog name, SKU or recipe edits after printing don't unprint it (as on main).
 export const printed = sql<boolean>`(${orders.invoicePrintedAt} is not null and ${plain})`;
 
-// What Print all prints: still to pack and not printed.
-export const inPrintAll = sql<boolean>`(${needsPacking} and not ${printed})`;
+// What Print all prints: still to pack or to set aside for pickup, and not
+// printed.
+export const inPrintAll = sql<boolean>`((${needsPacking} or ${awaitsPickup}) and not ${printed})`;
 
 // Units of an order line in live dispatches not yet handed off to its
 // marketplace (drizzle/0182's order_line_unsent, which its trigger uses

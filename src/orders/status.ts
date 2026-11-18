@@ -12,6 +12,10 @@ export const ORDER_STATUSES = {
 	external: "Unfulfilled",
 	// A supplier ships it; it waits on their tracking (drop-ship.ts).
 	dropship: "Waiting on tracking",
+	// The buyer collects it at our store: to set aside and mark ready.
+	pickup: "Pickup",
+	// Set aside, and Shopify told the buyer to come get it.
+	ready: "Ready for pickup",
 	pending: "Pending",
 	fulfilled: "Fulfilled",
 	// Amazon shipped it from its own stock (FBA); it never takes ours.
@@ -52,6 +56,8 @@ export function orderStatus(order: {
 	shipCountry: string | null;
 	fulfilledByChannel: boolean;
 	dropShipAt: Date | null;
+	pickup: boolean;
+	readyForPickupAt: Date | null;
 	// Partly shipped and the marketplace hasn't said what (to-ship.ts).
 	remainingUnknown: boolean;
 	// Cancelled or refunded with a label still live (see to-ship.ts).
@@ -87,6 +93,10 @@ export function orderStatus(order: {
 			return is("pending");
 		default: {
 			if (order.dropShipAt) return is("dropship", "info");
+			if (order.pickup)
+				return order.readyForPickupAt
+					? is("ready", "info")
+					: is("pickup", "warning");
 			// Partly shipped is still unfulfilled: the rest has to go.
 			const external = externalFulfillment(order);
 			return external

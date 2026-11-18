@@ -10,7 +10,11 @@ import { FilterBar, useSearchRows } from "#/components/filter-bar";
 import { LiveSync } from "#/components/live-sync";
 import { MatchDialog } from "#/components/match-picker";
 import { OrderTabs } from "#/components/order-tabs";
-import { OrderTable, orderLink } from "#/components/orders-list/order-table";
+import {
+	OrderTable,
+	orderLink,
+	pickupsLast,
+} from "#/components/orders-list/order-table";
 import {
 	printPlan,
 	type Ticks,
@@ -127,12 +131,20 @@ function Orders() {
 		setSearch({ q: text });
 	}
 
-	const { idx, shown, filtering } = useSearchRows(
-		orderSearch,
-		rows,
-		chips,
-		query,
-		{ sort, columns: ORDER_SORTS, values: sortValuesOf },
+	const {
+		idx,
+		shown: found,
+		filtering,
+	} = useSearchRows(orderSearch, rows, chips, query, {
+		sort,
+		columns: ORDER_SORTS,
+		values: sortValuesOf,
+	});
+	// On To ship, pickups wait in their own section under the boxes to pack.
+	// Everything after (cursor, ticks, printing) reads this order.
+	const shown = useMemo(
+		() => (view === "ship" ? pickupsLast(found) : found),
+		[view, found],
 	);
 	const plan = printPlan({ view, ticks, shown, filtering });
 

@@ -1,5 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ExternalLink, PackageOpen, Printer, Truck, Undo2 } from "lucide-react";
+import {
+	BellRing,
+	ExternalLink,
+	HandHelping,
+	PackageOpen,
+	Printer,
+	Truck,
+	Undo2,
+} from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
@@ -23,6 +31,7 @@ import { TimelineCard } from "#/components/order-page/timeline-card";
 import { TrackingCard } from "#/components/order-page/tracking-card";
 import { OrderStatusBadge } from "#/components/order-status";
 import { Badge, Card, Page, useBack } from "#/components/page";
+import { pickedUp, readyForPickup } from "#/components/pickup";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
 import { ReturnDialog } from "#/components/return-dialog";
@@ -99,6 +108,9 @@ function OrderPage() {
 	// A supplier can ship anything still to pack with no label of its own.
 	const canDropShip = pin !== null && !liveSend && !order.labelToVoid;
 	const waitingOnSupplier = status.key === "dropship";
+	// Collected at the store: marked ready, then picked up, never shipped.
+	const toSetAside = status.key === "pickup";
+	const canHandOver = toSetAside || status.key === "ready";
 	// Cancelled or refunded with a live label: that box mustn't go out.
 	const toVoid =
 		order.labelToVoid && liveSend && liveBoxes.length > 0
@@ -199,6 +211,7 @@ function OrderPage() {
 	useHotkeys({
 		Escape: goBack,
 		...(canShip ? { s: ship } : {}),
+		...(canHandOver ? { p: () => pickedUp(order) } : {}),
 		...(canReturn ? { r: () => setReturning(true) } : {}),
 	});
 
@@ -266,6 +279,23 @@ function OrderPage() {
 						<Button size="sm" variant="outline" onClick={() => packHere(order)}>
 							<PackageOpen />
 							Pack it here
+						</Button>
+					)}
+					{toSetAside && (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => readyForPickup(order)}
+						>
+							<BellRing />
+							Ready for pickup
+						</Button>
+					)}
+					{canHandOver && (
+						<Button size="sm" onClick={() => pickedUp(order)}>
+							<HandHelping />
+							Picked up
+							<kbd className="ml-1 rounded bg-white/15 px-1 text-xs">P</kbd>
 						</Button>
 					)}
 					{canShip && (
@@ -480,7 +510,9 @@ function OrderPage() {
 					)}
 					<Card title="Customer">
 						<p className="font-medium">{order.customerName ?? "No name"}</p>
-						{address.length > 0 ? (
+						{order.pickup ? (
+							<p className="text-muted-foreground">Picks up at the store</p>
+						) : address.length > 0 ? (
 							address.map((l) => <p key={l}>{l}</p>)
 						) : (
 							<p className="text-muted-foreground">No shipping address</p>

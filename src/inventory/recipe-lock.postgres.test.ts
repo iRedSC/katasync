@@ -120,6 +120,7 @@ describe.skipIf(!url)("inventory product lock ordering", () => {
 			fulfillmentStatus: "UNFULFILLED",
 			fulfilledByChannel: false,
 			soldInStore: false,
+			pickup: false,
 			financialStatus: "PAID",
 			customerName: null,
 			buyerId: null,

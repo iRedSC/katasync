@@ -40,6 +40,9 @@ export type ChannelOrder = {
 	// Rung up at our retail store (Shopify POS), so its stock comes off the
 	// POS location's shelf (locations.posPrimary).
 	soldInStore: boolean;
+	// The buyer collects it at our store (Shopify local pickup), so it's
+	// never packed or labeled. Always false on channels without pickup.
+	pickup: boolean;
 	financialStatus: string | null;
 	customerName: string | null;
 	// The buyer's account on the marketplace, when it tells us (TikTok's
@@ -134,7 +137,12 @@ export async function ingestOrder(
 			.values({ ...fields, storeId: store.id })
 			.onConflictDoUpdate({
 				target: [orders.storeId, orders.externalId],
-				set: { ...fields, syncedAt: new Date() },
+				set: {
+					...fields,
+					// katasync's own mark, kept only while it's still a pickup.
+					readyForPickupAt: sql`case when excluded.pickup then ${orders.readyForPickupAt} end`,
+					syncedAt: new Date(),
+				},
 			})
 			.returning({ id: orders.id });
 		await saveTax(tx, saved.id, tax);

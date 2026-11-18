@@ -262,6 +262,7 @@ async function ingest(
 		fulfillmentStatus: "UNFULFILLED",
 		fulfilledByChannel: false,
 		soldInStore: false,
+		pickup: false,
 		financialStatus: "PAID",
 		customerName: "Pat Doe",
 		buyerId: null,

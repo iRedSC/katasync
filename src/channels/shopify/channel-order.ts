@@ -21,6 +21,18 @@ export function isPosOrder(
 	);
 }
 
+// Collected at our store: Shopify gives every fulfillment order of a local
+// pickup the method PICK_UP. An order with some of it shipping is shipped,
+// pickup part and all, so nothing is left out of a box.
+export function isPickup(o: Pick<ShopifyOrder, "fulfillmentOrders">) {
+	const methods = o.fulfillmentOrders.nodes.map(
+		(f) => f.deliveryMethod?.methodType,
+	);
+	return methods.length > 0 && methods.every((m) => m === "PICK_UP");
+}
+
+const pickup = (o: ShopifyOrder) => !isPosOrder(o) && isPickup(o);
+
 // Where on Shopify the sale happened: "Online Store", "Point of Sale",
 // "Shop", "Draft Orders".
 export function shopifySalesChannel(
@@ -97,8 +109,11 @@ export function shopifyToChannelOrder(
 		fulfillmentStatus: o.displayFulfillmentStatus,
 		fulfilledByChannel: false,
 		soldInStore: isPosOrder(o),
+		pickup: pickup(o),
 		financialStatus: o.displayFinancialStatus,
-		customerName: o.shippingAddress?.name ?? null,
+		customerName:
+			o.shippingAddress?.name ??
+			(pickup(o) ? (o.billingAddress?.name ?? null) : null),
 		buyerId: null,
 		shipCity: o.shippingAddress?.city ?? null,
 		shipRegion: o.shippingAddress?.provinceCode ?? null,
