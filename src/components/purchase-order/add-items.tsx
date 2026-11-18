@@ -30,6 +30,7 @@ import {
 	type Prepared,
 	remoteWords,
 } from "./add-items/candidates";
+import { useHoldInPlace } from "./add-items/hold-in-place";
 import { Row } from "./add-items/row";
 import { ADD_MIN_WIDTH, AddColumns } from "./columns";
 import { browseLine, recommendedLine } from "./new-lines";
@@ -37,10 +38,6 @@ import { isUnsent, poData } from "./po-data";
 import { useAction } from "./use-action";
 
 const PAGE = 100;
-// How long after an add the list keeps its place on screen: long enough for
-// the reload that follows it, which brings a tool set's parts in as rows
-// above the list seconds later. Scrolling ends it sooner.
-const SETTLE_MS = 15_000;
 // One array, so a sent PO's rows aren't rebuilt on every render.
 const NO_RECS: PurchaseOrderDetail["recommended"] = [];
 
@@ -224,86 +221,10 @@ export function AddItems({
 		return id;
 	}
 
-	// Adding from the list puts a line on the PO above it and takes the row out
-	// of it, which would push the list down under the pointer. While an add
-	// settles, the page scrolls by however far the list moved, so it stays
-	// where it was on screen and the next row is under the pointer.
 	const listRef = useRef<HTMLDivElement>(null);
-	const anchor = useRef<{ top: number; until: number } | null>(null);
-	// Lines above can change without this list rendering (a set's parts
-	// arriving with the reload), so the page's own size is watched: it runs
-	// after layout and before paint, whatever caused it.
-	useEffect(() => {
-		const keep = () => {
-			const a = anchor.current;
-			const el = listRef.current;
-			if (!a || !el) return;
-			if (Date.now() > a.until) {
-				anchor.current = null;
-				document.documentElement.style.overflowAnchor = "";
-				return;
-			}
-			// How far the layout above pushed it, apart from any scrolling:
-			// what the person scrolls stays theirs.
-			const top = el.getBoundingClientRect().top + window.scrollY;
-			const moved = top - a.top;
-			if (Math.abs(moved) < 1) return;
-			a.top = top;
-			window.scrollBy(0, moved);
-		};
-		const watch = new ResizeObserver(keep);
-		watch.observe(document.body);
-		return () => watch.disconnect();
-	}, []);
-	// Scrolling by hand, or leaving, hands the page back to the browser.
-	useEffect(() => {
-		const release = () => {
-			if (!anchor.current) return;
-			anchor.current = null;
-			document.documentElement.style.overflowAnchor = "";
-		};
-		const keys = new Set([
-			"ArrowUp",
-			"ArrowDown",
-			"PageUp",
-			"PageDown",
-			"Home",
-			"End",
-			" ",
-		]);
-		const onKey = (e: KeyboardEvent) => {
-			if (keys.has(e.key)) release();
-		};
-		window.addEventListener("wheel", release, { passive: true });
-		window.addEventListener("touchmove", release, { passive: true });
-		window.addEventListener("keydown", onKey);
-		return () => {
-			window.removeEventListener("wheel", release);
-			window.removeEventListener("touchmove", release);
-			window.removeEventListener("keydown", onKey);
-			release();
-			document.documentElement.style.overflowAnchor = "";
-		};
-	}, []);
+	const holdInPlace = useHoldInPlace(listRef);
 	function addInPlace(c: Candidate) {
-		const el = listRef.current;
-		if (el) {
-			// A second add while one settles keeps the first one's place.
-			// Where it sits in the page, not the window, so scrolling isn't
-			// read as the layout moving.
-			const top =
-				anchor.current?.top ?? el.getBoundingClientRect().top + window.scrollY;
-			const until = Date.now() + SETTLE_MS;
-			anchor.current = { top, until };
-			// The browser's own scroll anchoring would correct the same move
-			// again.
-			document.documentElement.style.overflowAnchor = "none";
-			setTimeout(() => {
-				if (anchor.current?.until !== until) return;
-				anchor.current = null;
-				document.documentElement.style.overflowAnchor = "";
-			}, SETTLE_MS);
-		}
+		holdInPlace(c.productId);
 		add(c);
 	}
 
