@@ -141,6 +141,7 @@ export async function ingestOrder(
 					...fields,
 					// katasync's own mark, kept only while it's still a pickup.
 					readyForPickupAt: sql`case when excluded.pickup then ${orders.readyForPickupAt} end`,
+					pickupFulfillmentId: sql`case when excluded.pickup then ${orders.pickupFulfillmentId} end`,
 					syncedAt: new Date(),
 				},
 			})

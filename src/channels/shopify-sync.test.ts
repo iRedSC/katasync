@@ -33,7 +33,7 @@ const node = (
 	currentTaxLines: [],
 	shippingAddress: null,
 	billingAddress: null,
-	fulfillmentOrders: { nodes: [] },
+	fulfillmentOrders: { pageInfo: { hasNextPage: false }, nodes: [] },
 	lineItems: {
 		pageInfo: { hasNextPage: false, endCursor: null },
 		nodes: [

@@ -23,8 +23,10 @@ export function isPosOrder(
 
 // Collected at our store: Shopify gives every fulfillment order of a local
 // pickup the method PICK_UP. An order with some of it shipping is shipped,
-// pickup part and all, so nothing is left out of a box.
+// pickup part and all, so nothing is left out of a box; so is one with more
+// fulfillment orders than one read holds, since the rest might ship.
 export function isPickup(o: Pick<ShopifyOrder, "fulfillmentOrders">) {
+	if (o.fulfillmentOrders.pageInfo.hasNextPage) return false;
 	const methods = o.fulfillmentOrders.nodes.map(
 		(f) => f.deliveryMethod?.methodType,
 	);

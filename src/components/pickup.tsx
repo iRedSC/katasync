@@ -27,12 +27,10 @@ export async function pickedUp(order: Named) {
 	});
 	if (!r) return;
 	if (r.value.problems.length > 0) toast.error(r.value.problems.join("; "));
-	const { fulfillmentId } = r.value;
 	offerUndo(`${order.name} picked up`, {
 		undo: async () => {
 			const back = await optimism.change({
-				send: () =>
-					undoOrderPickedUp({ data: { orderId: order.id, fulfillmentId } }),
+				send: () => undoOrderPickedUp({ data: { orderId: order.id } }),
 			});
 			return back && `${order.name} is waiting for pickup again`;
 		},

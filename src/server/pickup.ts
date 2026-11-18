@@ -18,12 +18,5 @@ export const pickUpOrder = createServerFn({ method: "POST" })
 	.handler(({ data }) => markPickedUp(getDb(), data.orderId));
 
 export const undoOrderPickedUp = createServerFn({ method: "POST" })
-	.validator(
-		type({
-			orderId: "number.integer > 0",
-			fulfillmentId: /^gid:\/\/shopify\/Fulfillment\/\d+$/,
-		}),
-	)
-	.handler(({ data }) =>
-		undoPickedUp(getDb(), data.orderId, data.fulfillmentId),
-	);
+	.validator(order)
+	.handler(({ data }) => undoPickedUp(getDb(), data.orderId));

@@ -41,6 +41,7 @@ export const orderNode = type({
 	billingAddress: type({ name: "string | null" }).or("null"),
 	// How each part of it reaches the buyer: PICK_UP for local pickup.
 	fulfillmentOrders: {
+		pageInfo: { hasNextPage: "boolean" },
 		nodes: type({
 			deliveryMethod: type({ methodType: "string" }).or("null"),
 		}).array(),
@@ -77,7 +78,7 @@ export const ORDER_FIELDS = `
 	currentTaxLines { title rate priceSet { shopMoney { amount } } }
 	shippingAddress { name address1 address2 city provinceCode zip countryCodeV2 phone }
 	billingAddress { name }
-	fulfillmentOrders(first: 10) { nodes { deliveryMethod { methodType } } }
+	fulfillmentOrders(first: 10) { pageInfo { hasNextPage } nodes { deliveryMethod { methodType } } }
 	lineItems(first: 30) {
 		pageInfo { hasNextPage endCursor }
 		nodes {

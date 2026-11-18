@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
 	ingestShopifyOrder,
 	shopifyCancelFulfillment,
@@ -6,7 +6,12 @@ import {
 } from "#/channels/shopify";
 import { pickupOpen, shopifyReadyForPickup } from "#/channels/shopify/pickup";
 import type { Db } from "#/db/client";
-import { orders, stores } from "#/db/schema";
+import { orderLines, orders, stores } from "#/db/schema";
+import { consumeCommitments } from "#/inventory/commitments-consume";
+import {
+	assertFulfillmentRestorable,
+	restoreCommitments,
+} from "#/inventory/commitments-restore";
 import { awaitsPickup, financialStatus } from "#/orders/to-ship";
 import { lockOnOwnConnection, type OrderLocker } from "./dispatch";
 
@@ -85,13 +90,14 @@ export async function markReadyForPickup(
 }
 
 // The buyer has it: Shopify fulfills everything open, with no tracking, and
-// the order leaves To ship at once. Ready isn't required first, for a buyer
-// who walks in before the email goes.
+// the order leaves To ship at once. Its units leave the shelf now, as a
+// shipped box's do at handoff, under the fulfillment's own key. Ready isn't
+// required first, for a buyer who walks in before the email goes.
 export async function markPickedUp(
 	db: Db,
 	orderId: number,
 	outside: PickupOutside = live,
-): Promise<{ name: string; fulfillmentId: string; problems: string[] }> {
+): Promise<{ name: string; problems: string[] }> {
 	return outside.lock([orderId], async () => {
 		const order = await pickupOrder(db, orderId);
 		const { units } = await outside.open(order.externalId);
@@ -105,28 +111,47 @@ export async function markPickedUp(
 			units,
 			"exactly",
 		);
+		// Recorded first and on its own: Shopify has it now, whatever the
+		// stock says next, and Undo needs to know which fulfillment it was.
 		await db
 			.update(orders)
 			.set({
+				pickupFulfillmentId: delivered.fulfillmentId,
 				fulfillmentStatus:
 					delivered.remaining > 0 ? "PARTIALLY_FULFILLED" : "FULFILLED",
 			})
 			.where(eq(orders.id, orderId));
-		const problems = await reread(db, order, outside);
-		return {
-			name: order.name,
-			fulfillmentId: delivered.fulfillmentId,
-			problems,
-		};
+		const lines = await db
+			.select({ id: orderLines.id, externalId: orderLines.externalId })
+			.from(orderLines)
+			.where(
+				and(
+					eq(orderLines.orderId, orderId),
+					inArray(orderLines.externalId, [...units.keys()]),
+				),
+			);
+		const problems: string[] = [];
+		await consumeCommitments(db, {
+			orderId,
+			lines: lines.map((l) => ({
+				orderLineId: l.id,
+				quantity: units.get(l.externalId) ?? 0,
+			})),
+			fulfillmentKey: pickupKey(delivered.fulfillmentId),
+		}).catch((error: unknown) => {
+			problems.push(`${order.name}'s stock didn't move: ${errorText(error)}`);
+		});
+		problems.push(...(await reread(db, order, outside)));
+		return { name: order.name, problems };
 	});
 }
 
-// Takes a picked up back: Shopify's fulfillment is cancelled, so the order
-// is waiting for pickup again, with its stock held.
+// Takes back the last picked up: its Shopify fulfillment is cancelled and
+// its units are held on the shelf again, so the order waits for pickup.
+// Only that fulfillment, the one katasync recorded, can be cancelled.
 export async function undoPickedUp(
 	db: Db,
 	orderId: number,
-	fulfillmentId: string,
 	outside: PickupOutside = live,
 ): Promise<{ name: string; problems: string[] }> {
 	return outside.lock([orderId], async () => {
@@ -134,18 +159,34 @@ export async function undoPickedUp(
 			.select({
 				name: orders.name,
 				externalId: orders.externalId,
-				pickup: orders.pickup,
+				fulfillmentId: orders.pickupFulfillmentId,
 			})
 			.from(orders)
 			.where(eq(orders.id, orderId));
 		if (!order) throw new Error(`No order ${orderId}`);
-		if (!order.pickup) throw new Error(`${order.name} isn't a pickup`);
-		await outside.unfulfill(fulfillmentId);
+		if (!order.fulfillmentId)
+			throw new Error(`${order.name} has no pickup to take back`);
+		const key = pickupKey(order.fulfillmentId);
+		// Refused before Shopify hears, e.g. once a return was received.
+		await assertFulfillmentRestorable(db, { orderId, fulfillmentKey: key });
+		await outside.unfulfill(order.fulfillmentId);
+		await db.transaction(async (tx) => {
+			await restoreCommitments(tx, { orderId, fulfillmentKey: key });
+			await tx
+				.update(orders)
+				.set({ pickupFulfillmentId: null })
+				.where(eq(orders.id, orderId));
+		});
 		return { name: order.name, problems: await reread(db, order, outside) };
 	});
 }
 
-// Shopify has the change; a failed read back only delays the stock and
+const pickupKey = (fulfillmentId: string) => `pickup:${fulfillmentId}`;
+
+const errorText = (error: unknown) =>
+	error instanceof Error ? error.message : String(error);
+
+// Shopify has the change; a failed read back only delays the order's
 // status until the next sync, which reads it the same way.
 const reread = (
 	db: Db,
@@ -156,5 +197,5 @@ const reread = (
 		.reread(db, order.externalId)
 		.then(() => [])
 		.catch((error: unknown) => [
-			`${order.name}'s stock settles on the next sync (${error instanceof Error ? error.message : String(error)})`,
+			`${order.name} shows its old status until the next sync (${errorText(error)})`,
 		]);

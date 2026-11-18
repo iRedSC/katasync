@@ -679,6 +679,9 @@ export const orders = pgTable(
 		// When katasync told Shopify it's ready for pickup. Only katasync sets
 		// it; a sync clears it if the order stops being a pickup.
 		readyForPickupAt: timestamp({ withTimezone: true }),
+		// The Shopify fulfillment katasync made when it was picked up: what
+		// Undo cancels, and the key its stock was taken under.
+		pickupFulfillmentId: text(),
 		financialStatus: text(),
 		customerName: text(),
 		// The buyer's account on the marketplace (TikTok's user_id). TikTok hides
@@ -746,6 +749,10 @@ export const orders = pgTable(
 		check(
 			"orders_ready_is_pickup",
 			sql`${t.readyForPickupAt} is null or ${t.pickup}`,
+		),
+		check(
+			"orders_picked_up_is_pickup",
+			sql`${t.pickupFulfillmentId} is null or ${t.pickup}`,
 		),
 	],
 );

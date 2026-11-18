@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { isPickup } from "#/channels/shopify/channel-order";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { committedUnits } from "#/inventory/commitments";
+import { activate } from "#/inventory/commitments.fixtures";
+import { postMovements } from "#/inventory/ledger";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { orderStatus } from "#/orders/status";
 import {
@@ -24,6 +27,8 @@ import { assignOrderPins } from "./pins";
 
 let db: Db;
 let storeId: number;
+let warehouse: number;
+let wrench: number;
 const stockFrom = new Date("2026-10-01T00:00:00Z");
 const LINE = "gid://shopify/LineItem/1";
 
@@ -91,7 +96,7 @@ async function sold(extra: Partial<ChannelOrder> = {}) {
 		db,
 		{ id: storeId, stockFrom },
 		order(extra),
-		{ shipping: null, store: null, pos: null, storeKeeps: 0 },
+		{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 	);
 	await assignOrderPins(db);
 	return orderId;
@@ -120,12 +125,37 @@ beforeEach(async () => {
 		.insert(schema.stores)
 		.values({ channel: "shopify", name: "Shopify", stockFrom })
 		.returning();
-	await createProduct(db, "WRENCH", "simple");
+	[{ id: warehouse }] = await db
+		.insert(schema.locations)
+		.values({ name: "Warehouse", kind: "owned" })
+		.returning();
+	wrench = await createProduct(db, "WRENCH", "simple");
+	await postMovements(db, {
+		lines: [
+			{
+				productId: wrench,
+				locationId: warehouse,
+				delta: 10,
+				reason: "opening_balance",
+			},
+		],
+	});
 });
+
+async function onHand() {
+	const [level] = await db
+		.select()
+		.from(schema.stockLevels)
+		.where(eq(schema.stockLevels.productId, wrench));
+	return level?.onHand ?? 0;
+}
+const reserved = async () =>
+	(await committedUnits(db, [wrench])).get(wrench) ?? 0;
 
 describe("isPickup", () => {
 	const of = (...methods: (string | null)[]) => ({
 		fulfillmentOrders: {
+			pageInfo: { hasNextPage: false },
 			nodes: methods.map((m) => ({
 				deliveryMethod: m === null ? null : { methodType: m },
 			})),
@@ -138,6 +168,16 @@ describe("isPickup", () => {
 		expect(isPickup(of("PICK_UP", "SHIPPING"))).toBe(false);
 		expect(isPickup(of(null))).toBe(false);
 		expect(isPickup(of())).toBe(false);
+		// More than one read holds: the rest might ship.
+		const many = of("PICK_UP");
+		expect(
+			isPickup({
+				fulfillmentOrders: {
+					...many.fulfillmentOrders,
+					pageInfo: { hasNextPage: true },
+				},
+			}),
+		).toBe(false);
 	});
 });
 
@@ -234,10 +274,7 @@ describe("markPickedUp", () => {
 			"exactly",
 		);
 		expect(outside.reread).toHaveBeenCalled();
-		expect(r).toMatchObject({
-			fulfillmentId: "gid://shopify/Fulfillment/1",
-			problems: [],
-		});
+		expect(r.problems).toEqual([]);
 		expect(await row(id)).toMatchObject({
 			fulfillmentStatus: "FULFILLED",
 			needsShipping: false,
@@ -269,13 +306,38 @@ describe("markPickedUp", () => {
 		expect(outside.fulfill).not.toHaveBeenCalled();
 	});
 
-	test("undo cancels Shopify's fulfillment and reads the order back", async () => {
+	test("undo cancels only the fulfillment it made, once", async () => {
 		const id = await sold();
 		const outside = fakes();
-		const { fulfillmentId } = await markPickedUp(db, id, outside);
-		await undoPickedUp(db, id, fulfillmentId, outside);
-		expect(outside.unfulfill).toHaveBeenCalledWith(fulfillmentId);
+		await expect(undoPickedUp(db, id, outside)).rejects.toThrow(
+			"no pickup to take back",
+		);
+		await markPickedUp(db, id, outside);
+		await undoPickedUp(db, id, outside);
+		expect(outside.unfulfill).toHaveBeenCalledWith(
+			"gid://shopify/Fulfillment/1",
+		);
 		expect(outside.reread).toHaveBeenCalledTimes(2);
+		await expect(undoPickedUp(db, id, outside)).rejects.toThrow(
+			"no pickup to take back",
+		);
+		expect(outside.unfulfill).toHaveBeenCalledTimes(1);
+	});
+
+	test("in committed stock, its units leave the shelf and undo holds them again", async () => {
+		await activate(db);
+		const id = await sold();
+		expect(await reserved()).toBe(2);
+		expect(await onHand()).toBe(10);
+
+		const outside = fakes();
+		expect((await markPickedUp(db, id, outside)).problems).toEqual([]);
+		expect(await reserved()).toBe(0);
+		expect(await onHand()).toBe(8);
+
+		await undoPickedUp(db, id, outside);
+		expect(await reserved()).toBe(2);
+		expect(await onHand()).toBe(10);
 	});
 });
 

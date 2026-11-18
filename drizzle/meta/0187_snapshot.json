@@ -1,5 +1,5 @@
 {
-  "id": "7fc55c69-5fe9-4545-810a-cf5b4c5b0e7b",
+  "id": "efb91a53-1a81-42c7-a015-ecadd743f6de",
   "prevId": "26b9592c-641f-4a46-9213-2cb3c6210f5a",
   "version": "7",
   "dialect": "postgresql",
@@ -8734,6 +8734,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "pickup_fulfillment_id": {
+          "name": "pickup_fulfillment_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "financial_status": {
           "name": "financial_status",
           "type": "text",
@@ -8968,6 +8974,10 @@
         "orders_ready_is_pickup": {
           "name": "orders_ready_is_pickup",
           "value": "\"orders\".\"ready_for_pickup_at\" is null or \"orders\".\"pickup\""
+        },
+        "orders_picked_up_is_pickup": {
+          "name": "orders_picked_up_is_pickup",
+          "value": "\"orders\".\"pickup_fulfillment_id\" is null or \"orders\".\"pickup\""
         }
       },
       "isRLSEnabled": false
