@@ -9,6 +9,7 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { pointPictures } from "#/inbox/html";
+import { contactEmailsColumn, fromSupplier } from "#/purchasing/contacts";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { addTracking } from "#/purchasing/tracking";
 import {
@@ -53,13 +54,10 @@ export type ReadContent = (graphId: string) => Promise<Content>;
 // POs that have been sent: a draft has no supplier conversation yet.
 const ON_ORDER = ["sent", "closed", "cancelled"] as const;
 type Match = { purchaseOrderId: number; matchedBy: "address" | "subject" };
-// The sent POs a batch names, each with its supplier's email.
-export type SentPos = Map<number, string | null>;
+// The sent POs a batch names, each with its supplier's contact addresses.
+export type SentPos = Map<number, readonly string[]>;
 // Ids per query, so a big batch doesn't make one huge IN list.
 const IDS_PER_QUERY = 500;
-
-const domainOf = (address: string | null | undefined) =>
-	address?.trim().toLowerCase().split("@")[1] ?? null;
 
 // The POs an email names: by its reply address, and by its subject.
 function namedIn(email: Pick<InboxMessage, "recipients" | "subject">) {
@@ -91,14 +89,14 @@ export async function sentPosOf(
 			.select({
 				id: purchaseOrders.id,
 				status: purchaseOrders.status,
-				supplierEmail: suppliers.email,
+				supplierEmails: contactEmailsColumn,
 			})
 			.from(purchaseOrders)
 			.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
 			.where(inArray(purchaseOrders.id, ids.slice(i, i + IDS_PER_QUERY)));
 		for (const p of rows) {
 			if ((ON_ORDER as readonly string[]).includes(p.status))
-				sent.set(p.id, p.supplierEmail);
+				sent.set(p.id, p.supplierEmails);
 		}
 	}
 	return sent;
@@ -115,11 +113,10 @@ export function matchEmail(
 	if (addressed.length > 1) return null;
 	if (addressed.length === 1)
 		return { purchaseOrderId: addressed[0], matchedBy: "address" };
-	const fromDomain = domainOf(email.fromAddress);
 	const subjects = [
 		...new Set(
-			bySubject.filter(
-				(id) => fromDomain && domainOf(sent.get(id)) === fromDomain,
+			bySubject.filter((id) =>
+				fromSupplier(email.fromAddress, sent.get(id) ?? []),
 			),
 		),
 	];

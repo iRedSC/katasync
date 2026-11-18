@@ -11,6 +11,7 @@ import {
 	purchaseOrderLines,
 } from "#/db/schema";
 import { postMovements, undoBatch } from "#/inventory/ledger";
+import type { Recipients } from "#/purchasing/contacts";
 import {
 	EMAIL_PHOTO_BYTES,
 	MAX_PHOTO_BYTES,
@@ -359,7 +360,7 @@ export async function sendDamageReport(
 	input: {
 		purchaseOrderId: number;
 		remedies: { damageId: number; remedy: Remedy }[];
-		deliver: (tx: Db, items: DamageReportItem[]) => Promise<string>;
+		deliver: (tx: Db, items: DamageReportItem[]) => Promise<Recipients>;
 	},
 ) {
 	return db.transaction(async (tx) => {
@@ -418,7 +419,7 @@ export async function sendDamageReport(
 
 		const [report] = await tx
 			.insert(purchaseOrderDamageReports)
-			.values({ purchaseOrderId: po.id, sentTo })
+			.values({ purchaseOrderId: po.id, sentTo: [...sentTo] })
 			.returning({ id: purchaseOrderDamageReports.id });
 		for (const d of pending) {
 			const remedy = chosen.get(d.id) as Remedy;

@@ -48,10 +48,11 @@ describe("the AI filing emails", () => {
 		const made0 = await createPurchasingDb();
 		db = made0.db;
 		seeded = { supplierId: made0.canam, locationId: made0.warehouse };
-		await db
-			.update(schema.suppliers)
-			.set({ email: "orders@canam.com" })
-			.where(eq(schema.suppliers.id, made0.canam));
+		await db.insert(schema.supplierContacts).values({
+			supplierId: made0.canam,
+			email: "orders@canam.com",
+			position: 0,
+		});
 		const made = await db
 			.insert(schema.products)
 			.values([

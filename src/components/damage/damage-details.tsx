@@ -13,6 +13,7 @@ import {
 import { Tip } from "#/components/ui/tooltip";
 import { formatDay } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
+import { recipientLabel } from "#/purchasing/contacts";
 import {
 	type PurchaseOrderDetail,
 	removePurchaseDamage,
@@ -163,9 +164,10 @@ export function DamageDetailsDialog({
 						</p>
 						{x.reportedAt ? (
 							<p>
-								Reported to {x.reportedTo} on {formatDay(x.reportedAt)}, asking
-								for {x.remedy === "replacement" ? "a replacement" : "credit"}.
-								It can't change now.
+								Reported to {recipientLabel(x.reportedTo ?? [])} on{" "}
+								{formatDay(x.reportedAt)}, asking for{" "}
+								{x.remedy === "replacement" ? "a replacement" : "credit"}. It
+								can't change now.
 							</p>
 						) : (
 							<p>

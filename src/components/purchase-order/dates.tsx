@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
+import { Tip } from "#/components/ui/tooltip";
 import { formatDay } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { recipientLabel } from "#/purchasing/contacts";
 import { isBackOrdered, isLate } from "#/purchasing/status";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { isUnsent } from "./po-data";
@@ -30,7 +32,12 @@ export function Dates({ detail: d }: { detail: PurchaseOrderDetail }) {
 			<span key="sent">
 				{formatDay(po.sentAt)}
 				{po.sentTo && (
-					<span className="text-muted-foreground"> to {po.sentTo}</span>
+					<Tip content={po.sentTo.join(", ")}>
+						<span className="text-muted-foreground">
+							{" "}
+							to {recipientLabel(po.sentTo, d.supplier.contacts)}
+						</span>
+					</Tip>
 				)}
 			</span>,
 		]);

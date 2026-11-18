@@ -363,7 +363,7 @@ describe("received stock's cost", () => {
 		await sendDamageReport(db, {
 			purchaseOrderId: po,
 			remedies: [{ damageId: damage.id, remedy: "replacement" }],
-			deliver: async () => "orders@canam.test",
+			deliver: async () => ["orders@canam.test"] as const,
 		});
 		// Two more knives coming: blades are $220 of $236.
 		expect(await costOf(blade)).toBeCloseTo(

@@ -13,6 +13,7 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { optimism } from "#/lib/optimism";
+import { recipientLabel } from "#/purchasing/contacts";
 import {
 	previewPurchaseOrderEmail,
 	sendPurchaseOrder,
@@ -54,7 +55,10 @@ export function SendDialog({
 		});
 		setSending(false);
 		if (!r) return;
-		toast.success(`PO ${purchaseOrderId} emailed to ${r.value.sentTo}`);
+		if (r.value.sentTo)
+			toast.success(
+				`PO ${purchaseOrderId} emailed to ${recipientLabel(r.value.sentTo, preview?.to)}`,
+			);
 		onClose();
 	}
 

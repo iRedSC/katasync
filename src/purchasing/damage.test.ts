@@ -45,7 +45,7 @@ beforeEach(async () => {
 	const knife = await createProduct(db, "KNIFE", "simple");
 	const [supplier] = await db
 		.insert(schema.suppliers)
-		.values({ code: "CANAM", name: "CanAm", email: "orders@canam.test" })
+		.values({ code: "CANAM", name: "CanAm" })
 		.returning();
 	const [location] = await db
 		.insert(schema.locations)
@@ -221,7 +221,7 @@ test("sends every unreported damage once; a replacement makes the line wait agai
 		sendDamageReport(db, {
 			purchaseOrderId: poId,
 			remedies: [{ damageId: whole.damageId, remedy: "credit" }],
-			deliver: async () => "x",
+			deliver: async () => ["x"] as const,
 		}),
 	).rejects.toThrow("changed");
 
@@ -252,7 +252,7 @@ test("sends every unreported damage once; a replacement makes the line wait agai
 		],
 		deliver: async (_tx, items) => {
 			sent = items;
-			return "orders@canam.test";
+			return ["orders@canam.test"] as const;
 		},
 	});
 	expect(sent.map((i) => [i.sku, i.remedy, i.photos.length])).toEqual([
@@ -277,7 +277,7 @@ test("sends every unreported damage once; a replacement makes the line wait agai
 		sendDamageReport(db, {
 			purchaseOrderId: poId,
 			remedies: [],
-			deliver: async () => "x",
+			deliver: async () => ["x"] as const,
 		}),
 	).rejects.toThrow("no damage to report");
 });
@@ -306,7 +306,7 @@ test("missing items come off the shelf without saying what's wrong, and the repo
 		remedies: [{ damageId: d.id, remedy: "credit" }],
 		deliver: async (_tx, items) => {
 			sent = items;
-			return "orders@canam.test";
+			return ["orders@canam.test"] as const;
 		},
 	});
 	expect(sent).toMatchObject([{ kind: "missing", description: null }]);

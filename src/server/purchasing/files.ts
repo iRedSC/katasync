@@ -52,5 +52,6 @@ export const unmovePoFilesTo = createServerFn({ method: "POST" })
 
 // The POs a file can be moved to: those sent in the last half year.
 export const posToMoveFilesTo = createServerFn({ method: "GET" }).handler(
-	async () => (await recentPos(getDb())).map(({ supplierEmail: _, ...p }) => p),
+	async () =>
+		(await recentPos(getDb())).map(({ supplierEmails: _, ...p }) => p),
 );

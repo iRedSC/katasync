@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Card } from "#/components/page";
 import { SupplierDialog } from "#/components/supplier-dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { formatPhone } from "#/lib/format";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { poData } from "./po-data";
@@ -24,16 +25,19 @@ export function SupplierPanel({ detail: d }: { detail: PurchaseOrderDetail }) {
 			>
 				<div className="flex flex-col gap-0.5">
 					<span className="font-medium">{d.supplier.name}</span>
-					{d.supplier.contactName && <span>{d.supplier.contactName}</span>}
-					{d.supplier.email ? (
-						<a
-							href={`mailto:${d.supplier.email}`}
-							className="truncate text-link hover:underline"
-						>
-							{d.supplier.email}
-						</a>
+					{d.supplier.contacts.length > 0 ? (
+						d.supplier.contacts.map((c) => (
+							<Tip key={c.email} content={c.name && c.email}>
+								<a
+									href={`mailto:${c.email}`}
+									className="truncate text-link hover:underline"
+								>
+									{c.name ?? c.email}
+								</a>
+							</Tip>
+						))
 					) : (
-						<span className="text-muted-foreground">No email</span>
+						<span className="text-muted-foreground">No contacts</span>
 					)}
 					{d.supplier.phone && <span>{formatPhone(d.supplier.phone)}</span>}
 					{d.supplier.paymentTerms && (
