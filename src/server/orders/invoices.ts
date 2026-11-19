@@ -79,6 +79,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 					storeId: orders.storeId,
 					buyerId: orders.buyerId,
 					needsPacking,
+					pickup: orders.pickup,
 					remainingUnknown,
 					fulfillmentStatus: orders.fulfillmentStatus,
 					// Read with the order, before its slip, so a change while the
@@ -153,7 +154,10 @@ export const listInvoices = createServerFn({ method: "GET" })
 		]);
 		// Other orders to the same address that can share the box, so the
 		// packer gathers them before typing the pin.
-		const sharing = sharingOrders(toShip, pool, live);
+		// A pickup shares no box.
+		const boxed = <T extends { pickup: boolean }>(list: T[]) =>
+			list.filter((o) => !o.pickup);
+		const sharing = sharingOrders(boxed(toShip), boxed(pool), live);
 		return {
 			from: from
 				? {

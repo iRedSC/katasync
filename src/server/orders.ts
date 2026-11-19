@@ -100,6 +100,8 @@ export const listOrders = createServerFn({ method: "GET" })
 				labelToVoid,
 				fulfilledByChannel: orders.fulfilledByChannel,
 				dropShipAt: orders.dropShipAt,
+				pickup: orders.pickup,
+				readyForPickupAt: orders.readyForPickupAt,
 				remainingUnknown,
 				printed,
 			})
@@ -185,6 +187,8 @@ export const getOrder = createServerFn({ method: "GET" })
 				fulfillmentStatus: orders.fulfillmentStatus,
 				fulfilledByChannel: orders.fulfilledByChannel,
 				dropShipAt: orders.dropShipAt,
+				pickup: orders.pickup,
+				readyForPickupAt: orders.readyForPickupAt,
 				remainingUnknown,
 				dropShipSentAt: orders.dropShipSentAt,
 				dropShipCarrier: orders.dropShipCarrier,

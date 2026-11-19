@@ -1,5 +1,5 @@
-import { ExternalLink } from "lucide-react";
-import { type RefObject, useEffect, useState } from "react";
+import { ExternalLink, Store } from "lucide-react";
+import { Fragment, type RefObject, useEffect, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { DropShipTracking } from "#/components/drop-ship";
 import { OrderStatusBadge } from "#/components/order-status";
@@ -15,6 +15,17 @@ import type { OrderRow } from "#/server/orders";
 import { OrderMenu } from "./order-menu";
 import { OrderProducts } from "./order-products";
 import { headerState, type Ticks } from "./selection";
+
+// Waiting for the buyer to collect it, not to be packed.
+const isPickupRow = (o: OrderRow) => {
+	const key = orderStatus(o).key;
+	return key === "pickup" || key === "ready";
+};
+
+// Pickups after everything to pack, each part in the order it came.
+export function pickupsLast(rows: readonly OrderRow[]): OrderRow[] {
+	return [...rows.filter((o) => !isPickupRow(o)), ...rows.filter(isPickupRow)];
+}
 
 export const orderLink = (o: OrderRow) =>
 	({ to: "/orders/$id", params: { id: String(o.id) } }) as const;
@@ -46,6 +57,9 @@ export function OrderTable({
 }) {
 	const [menuFor, setMenuFor] = useState<OrderRow | null>(null);
 	const header = headerState(ticks, rows);
+	// Where To ship's pickup section starts (rows come from pickupsLast).
+	const firstPickup = view === "ship" ? rows.findIndex(isPickupRow) : -1;
+	const pickups = firstPickup < 0 ? 0 : rows.length - firstPickup;
 	// No clock until mounted, so the server and the first client render print
 	// the same dates; "Today" and "Yesterday" come in once the browser has one.
 	const [now, setNow] = useState<Date | null>(null);
@@ -92,102 +106,117 @@ export function OrderTable({
 							const external = externalFulfillment(o);
 							const ticked = ticks.has(o.id);
 							return (
-								<tr
-									key={o.id}
-									data-index={i}
-									{...link(orderLink(o))}
-									onMouseMove={() => onCursor(i)}
-									onContextMenu={() => setMenuFor(o)}
-									className={cn(
-										"cursor-pointer border-t first:border-t-0",
-										i === cursor
-											? "bg-surface"
-											: ticked
-												? "bg-subtle"
-												: "hover:bg-subtle",
-									)}
-								>
-									<TickCell
-										as="td"
-										label={`${ticked ? "Untick" : "Tick"} ${o.name}`}
-										checked={ticked}
-										onTick={(range) => onTick(i, range)}
-									/>
-									{view === "ship" && (
-										<td className="px-4 py-2.5 font-mono text-base font-bold tabular-nums">
-											{o.pin}
-										</td>
-									)}
-									<td className="px-4 py-2.5 font-semibold">
-										{external ? (
-											// Opens the marketplace's page; the rest of the row
-											// still opens katasync's.
-											<a
-												href={external.url}
-												target="_blank"
-												rel="noreferrer"
-												onClick={(e) => e.stopPropagation()}
-												className="inline-flex items-center gap-1 text-link hover:underline"
+								<Fragment key={o.id}>
+									{i === firstPickup && (
+										<tr className="border-t bg-subtle">
+											<td
+												colSpan={99}
+												className="px-4 py-1.5 text-xs font-medium text-muted-foreground"
 											>
-												{o.name}
-												<ExternalLink className="size-3.5" />
-											</a>
-										) : (
-											o.name
+												<Store className="mr-1.5 inline size-3.5 align-[-2px]" />
+												Pickup · {pickups}
+											</td>
+										</tr>
+									)}
+									<tr
+										data-index={i}
+										{...link(orderLink(o))}
+										onMouseMove={() => onCursor(i)}
+										onContextMenu={() => setMenuFor(o)}
+										className={cn(
+											"cursor-pointer border-t first:border-t-0",
+											i === cursor
+												? "bg-surface"
+												: ticked
+													? "bg-subtle"
+													: "hover:bg-subtle",
 										)}
-									</td>
-									<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
-										{formatOrderDate(o.placedAt, now)}
-									</td>
-									{/* Shares the leftover width; long names end in "…". */}
-									<td className="w-2/5 max-w-0 px-4 py-2.5">
-										<div className="truncate">
-											{o.customerName ?? "No name"}
-										</div>
-										{o.shipCity && (
-											<div className="truncate text-xs text-muted-foreground">
-												{o.shipCity}
-												{o.shipRegion && `, ${o.shipRegion}`}
-											</div>
-										)}
-									</td>
-									{/* Shares the leftover width with the customer. */}
-									<td className="hidden w-3/5 max-w-0 px-4 py-2 md:table-cell">
-										<OrderProducts lines={o.lines} />
-									</td>
-									<td className="hidden px-4 py-2.5 lg:table-cell">
-										<ChannelBadge
-											channel={o.channel}
-											salesChannel={o.salesChannel}
+									>
+										<TickCell
+											as="td"
+											label={`${ticked ? "Untick" : "Tick"} ${o.name}`}
+											checked={ticked}
+											onTick={(range) => onTick(i, range)}
 										/>
-									</td>
-									<td className="px-4 py-2.5 text-right tabular-nums">
-										{formatMoney(o.total)}
-									</td>
-									<td className="px-4 py-2.5">
-										<div className="flex items-center gap-1.5">
-											<OrderStatusBadge status={status} />
-											{status.key === "dropship" && (
-												<DropShipTracking order={o} />
+										{view === "ship" && (
+											<td className="px-4 py-2.5 font-mono text-base font-bold tabular-nums">
+												{o.pin}
+											</td>
+										)}
+										<td className="px-4 py-2.5 font-semibold">
+											{external ? (
+												// Opens the marketplace's page; the rest of the row
+												// still opens katasync's.
+												<a
+													href={external.url}
+													target="_blank"
+													rel="noreferrer"
+													onClick={(e) => e.stopPropagation()}
+													className="inline-flex items-center gap-1 text-link hover:underline"
+												>
+													{o.name}
+													<ExternalLink className="size-3.5" />
+												</a>
+											) : (
+												o.name
 											)}
-											{o.unmatched > 0 && (
-												<Badge tone="critical">Unknown product</Badge>
+										</td>
+										<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
+											{formatOrderDate(o.placedAt, now)}
+										</td>
+										{/* Shares the leftover width; long names end in "…". */}
+										<td className="w-2/5 max-w-0 px-4 py-2.5">
+											<div className="truncate">
+												{o.customerName ?? "No name"}
+											</div>
+											{o.shipCity && (
+												<div className="truncate text-xs text-muted-foreground">
+													{o.shipCity}
+													{o.shipRegion && `, ${o.shipRegion}`}
+												</div>
 											)}
-											{o.lines.some((l) => (l.fromStore?.length ?? 0) > 0) && (
-												<Badge tone="warning">
-													Fetch from{" "}
-													{
-														o.lines.find((l) => (l.fromStore?.length ?? 0) > 0)
-															?.fromStore?.[0].location
-													}
-												</Badge>
-											)}
-											{o.sameBuyer.length > 0 && <SameBuyerChip order={o} />}
-											{/* Print all skips it, so the list says why. */}
-											{view === "ship" && o.printed && <Badge>Printed</Badge>}
-										</div>
-									</td>
-								</tr>
+										</td>
+										{/* Shares the leftover width with the customer. */}
+										<td className="hidden w-3/5 max-w-0 px-4 py-2 md:table-cell">
+											<OrderProducts lines={o.lines} />
+										</td>
+										<td className="hidden px-4 py-2.5 lg:table-cell">
+											<ChannelBadge
+												channel={o.channel}
+												salesChannel={o.salesChannel}
+											/>
+										</td>
+										<td className="px-4 py-2.5 text-right tabular-nums">
+											{formatMoney(o.total)}
+										</td>
+										<td className="px-4 py-2.5">
+											<div className="flex items-center gap-1.5">
+												<OrderStatusBadge status={status} />
+												{status.key === "dropship" && (
+													<DropShipTracking order={o} />
+												)}
+												{o.unmatched > 0 && (
+													<Badge tone="critical">Unknown product</Badge>
+												)}
+												{o.lines.some(
+													(l) => (l.fromStore?.length ?? 0) > 0,
+												) && (
+													<Badge tone="warning">
+														Fetch from{" "}
+														{
+															o.lines.find(
+																(l) => (l.fromStore?.length ?? 0) > 0,
+															)?.fromStore?.[0].location
+														}
+													</Badge>
+												)}
+												{o.sameBuyer.length > 0 && <SameBuyerChip order={o} />}
+												{/* Print all skips it, so the list says why. */}
+												{view === "ship" && o.printed && <Badge>Printed</Badge>}
+											</div>
+										</td>
+									</tr>
+								</Fragment>
 							);
 						})}
 					</tbody>

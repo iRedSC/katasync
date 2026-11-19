@@ -194,6 +194,7 @@ export function tiktokToChannelOrder(
 		fulfillmentStatus,
 		fulfilledByChannel: fbt,
 		soldInStore: false,
+		pickup: false,
 		financialStatus: order.status === "UNPAID" ? "PENDING" : "PAID",
 		// A masked name ("D*****") still tells orders apart on the dashboard.
 		customerName: address?.name || null,

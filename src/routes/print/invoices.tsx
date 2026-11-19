@@ -205,6 +205,8 @@ function Invoice({
 	// so an order can't print as an invoice addressed to no one.
 	const buyer = shownBuyer(o);
 	const slip = buyer === null;
+	// Set aside for the buyer to collect: it must never go in a box.
+	const pickup = o.pickup;
 
 	return (
 		<article className="mx-auto mb-6 flex min-h-[11in] max-w-[8.5in] flex-col gap-8 bg-white p-[0.5in] text-[11pt] text-black shadow-card break-after-page last:break-after-auto print:m-0 print:min-h-[9.95in] print:max-w-none print:p-0 print:shadow-none">
@@ -221,6 +223,11 @@ function Invoice({
 					<p className="text-[20pt] font-bold">
 						{slip ? "Packing Slip" : "Invoice"}
 					</p>
+					{pickup && (
+						<p className="mt-1 inline-block rounded-md border-2 border-black px-2 text-[16pt] font-black tracking-widest">
+							PICKUP
+						</p>
+					)}
 					<p className="font-semibold">{o.name}</p>
 					<p>
 						{new Date(o.placedAt).toLocaleDateString("en-US", {
@@ -238,7 +245,7 @@ function Invoice({
 			{buyer && (
 				<section>
 					<p className="text-[9pt] font-semibold tracking-wide text-muted-foreground uppercase">
-						Ship to
+						{pickup ? "Picking up" : "Ship to"}
 					</p>
 					<p className="text-[13pt] font-semibold">{buyer.name}</p>
 					{buyer.lines.map((l) => (
@@ -443,7 +450,10 @@ function ounces(grams: number) {
 // or a name that's missing or masked the way TikTok sends it ("D*****").
 function shownBuyer(o: Data["invoices"][number]) {
 	const name = o.customerName;
-	if (!o.shipAddress1 || !name || name.includes("*")) return null;
+	if (!name || name.includes("*")) return null;
+	// A pickup goes to no address; the name is who to hand it to.
+	if (o.pickup) return { name, lines: [] };
+	if (!o.shipAddress1) return null;
 	const lines = [
 		o.shipAddress1,
 		o.shipAddress2,

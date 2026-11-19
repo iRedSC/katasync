@@ -1,9 +1,11 @@
 import { useNavigate } from "@tanstack/react-router";
 import {
 	AlertTriangle,
+	BellRing,
 	Copy,
 	ExternalLink,
 	FileText,
+	HandHelping,
 	Link2,
 	PackageOpen,
 	Printer,
@@ -15,6 +17,7 @@ import {
 	packHere,
 	shippedWithoutTracking,
 } from "#/components/drop-ship";
+import { pickedUp, readyForPickup } from "#/components/pickup";
 import {
 	ContextMenuContent,
 	ContextMenuItem,
@@ -37,7 +40,8 @@ export function OrderMenu({
 }) {
 	const navigate = useNavigate();
 	const external = externalFulfillment(o);
-	const waiting = orderStatus(o).key === "dropship";
+	const status = orderStatus(o).key;
+	const waiting = status === "dropship";
 
 	return (
 		<ContextMenuContent>
@@ -66,6 +70,18 @@ export function OrderMenu({
 				<ContextMenuItem onSelect={() => dropShip(o)}>
 					<Truck />
 					Drop-ship
+				</ContextMenuItem>
+			)}
+			{status === "pickup" && (
+				<ContextMenuItem onSelect={() => readyForPickup(o)}>
+					<BellRing />
+					Ready for pickup
+				</ContextMenuItem>
+			)}
+			{(status === "pickup" || status === "ready") && (
+				<ContextMenuItem onSelect={() => pickedUp(o)}>
+					<HandHelping />
+					Picked up
 				</ContextMenuItem>
 			)}
 			{waiting && (

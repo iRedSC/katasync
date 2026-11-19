@@ -63,6 +63,7 @@ function posOrder(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 		fulfillmentStatus: "FULFILLED",
 		fulfilledByChannel: false,
 		soldInStore: true,
+		pickup: false,
 		financialStatus: "PAID",
 		customerName: null,
 		buyerId: null,

@@ -73,6 +73,7 @@ const sell = (listingExternalId: string | null, sku: string | null) =>
 			fulfillmentStatus: "UNFULFILLED",
 			fulfilledByChannel: false,
 			soldInStore: false,
+			pickup: false,
 			financialStatus: "PAID",
 			customerName: null,
 			buyerId: null,

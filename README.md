@@ -21,6 +21,8 @@ Shopify and TikTok also send order webhooks to `/api/webhooks/<channel>` (`src/c
 
 Webhooks only speed things up; cron is authoritative. If orders go back to taking minutes, run `pnpm webhooks` bare to check the subscriptions; failures are logged, and Shopify emails the app's developer address.
 
+Shopify local pickups (every fulfillment order PICK_UP) stay on To ship as Pickup, never packed, labeled or pinned; their slips print in Print all marked PICKUP. Ready for pickup has Shopify email the buyer; Picked up fulfills the order with no tracking, and can be undone (`src/shipping/pickup.ts`). After migration `0188_pickup_orders`, run `pnpm pickup:backfill --write` once so pickups already synced leave the packing queue.
+
 Shopify's shipping email links to the storefront's tracking page (`src/shipping/tracking-link.ts`). Set `STOREFRONT_ORIGIN` (e.g. `https://eastcoastdrywall.com`) and `TRACKING_LINK_SECRET`, the same secret the storefront checks links with. Without them the email links to the carrier, and a warning is logged on each shipment.
 
 `pnpm test` runs against an in-memory Postgres (PGlite) and needs no database.

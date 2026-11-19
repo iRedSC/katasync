@@ -17,6 +17,8 @@ const base = {
 	labelToVoid: false,
 	fulfilledByChannel: false,
 	dropShipAt: null,
+	pickup: false,
+	readyForPickupAt: null,
 	remainingUnknown: false,
 	returnStage: null,
 } as const;

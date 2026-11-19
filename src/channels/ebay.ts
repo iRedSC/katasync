@@ -241,6 +241,7 @@ export function ebayToChannelOrder(
 			fulfillment[order.orderFulfillmentStatus] ?? "UNFULFILLED",
 		fulfilledByChannel: false,
 		soldInStore: false,
+		pickup: false,
 		financialStatus: payment[order.orderPaymentStatus ?? ""] ?? null,
 		customerName: shipTo?.fullName ?? null,
 		buyerId: null,
