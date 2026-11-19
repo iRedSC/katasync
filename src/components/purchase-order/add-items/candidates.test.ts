@@ -8,7 +8,13 @@ import {
 } from "#/products/search";
 import type { BrowseRow, PurchaseOrderMatch } from "#/server/purchasing";
 import type { Recommendation } from "../types";
-import { candidateRows, type Prepared, remoteWords } from "./candidates";
+import {
+	candidateRows,
+	type Prepared,
+	remoteWords,
+	scannedLine,
+	withoutOnPo,
+} from "./candidates";
 
 const facets = (text: string[], status: string[] = []): Facets => ({
 	...(Object.fromEntries(
@@ -198,5 +204,35 @@ describe("candidateRows", () => {
 		);
 		expect(remote).toEqual({ state: "failed", message: "Timed out" });
 		expect(rows("knife", remote)).toEqual([1]);
+	});
+});
+
+describe("On PO", () => {
+	const recs = [rec(10, 5), rec(11, 1), rec(12, 2)];
+	const all = candidateRows({
+		recs,
+		prepared: new Map(),
+		remote: { state: "off" },
+		chips: [],
+		q: parseQuery(""),
+		sort: [],
+		sent: false,
+	});
+	const onPo = new Map([
+		[10, 100],
+		[11, 101],
+	]);
+
+	test("hides what's on the PO, but keeps what was just added here", () => {
+		const ids = (kept: number[]) =>
+			withoutOnPo(all, onPo, new Set(kept)).map((c) => c.productId);
+		expect(ids([])).toEqual([12]);
+		expect(ids([11])).toEqual([11, 12]);
+	});
+
+	test("a scanned code already on the PO names its line, hidden or not", () => {
+		expect(scannedLine(all, parseQuery("r-11"), onPo)?.lineId).toBe(101);
+		expect(scannedLine(all, parseQuery("r-12"), onPo)).toBeNull();
+		expect(scannedLine(all, parseQuery(""), onPo)).toBeNull();
 	});
 });
