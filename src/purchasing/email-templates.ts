@@ -223,6 +223,3 @@ export async function resetTemplate(db: Db, kind: TemplateKind) {
 	await db.delete(emailTemplates).where(eq(emailTemplates.kind, kind));
 	return DEFAULT_TEMPLATES[kind];
 }
-
-export const greetingFor = (contactName: string | null) =>
-	contactName ? `Hi ${contactName},` : "Hello,";

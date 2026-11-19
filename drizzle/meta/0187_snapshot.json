@@ -1,5 +1,5 @@
 {
-  "id": "efb91a53-1a81-42c7-a015-ecadd743f6de",
+  "id": "04f68512-50ef-462c-8767-49831e1f4bf7",
   "prevId": "26b9592c-641f-4a46-9213-2cb3c6210f5a",
   "version": "7",
   "dialect": "postgresql",
@@ -8721,25 +8721,6 @@
           "notNull": true,
           "default": false
         },
-        "pickup": {
-          "name": "pickup",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "ready_for_pickup_at": {
-          "name": "ready_for_pickup_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "pickup_fulfillment_id": {
-          "name": "pickup_fulfillment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "financial_status": {
           "name": "financial_status",
           "type": "text",
@@ -8970,14 +8951,6 @@
         "orders_drop_ship_no_pin": {
           "name": "orders_drop_ship_no_pin",
           "value": "\"orders\".\"drop_ship_at\" is null or \"orders\".\"pin\" is null"
-        },
-        "orders_ready_is_pickup": {
-          "name": "orders_ready_is_pickup",
-          "value": "\"orders\".\"ready_for_pickup_at\" is null or \"orders\".\"pickup\""
-        },
-        "orders_picked_up_is_pickup": {
-          "name": "orders_picked_up_is_pickup",
-          "value": "\"orders\".\"pickup_fulfillment_id\" is null or \"orders\".\"pickup\""
         }
       },
       "isRLSEnabled": false
@@ -11196,7 +11169,7 @@
         },
         "sent_to": {
           "name": "sent_to",
-          "type": "text",
+          "type": "text[]",
           "primaryKey": false,
           "notNull": true
         },
@@ -11243,7 +11216,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "purchase_order_damage_reports_sent_to_someone": {
+          "name": "purchase_order_damage_reports_sent_to_someone",
+          "value": "cardinality(\"purchase_order_damage_reports\".\"sent_to\") > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.purchase_order_damages": {
@@ -12526,7 +12504,7 @@
         },
         "sent_to": {
           "name": "sent_to",
-          "type": "text",
+          "type": "text[]",
           "primaryKey": false,
           "notNull": false
         },
@@ -12624,6 +12602,10 @@
       },
       "policies": {},
       "checkConstraints": {
+        "purchase_orders_sent_to_someone": {
+          "name": "purchase_orders_sent_to_someone",
+          "value": "\"purchase_orders\".\"sent_to\" is null or cardinality(\"purchase_orders\".\"sent_to\") > 0"
+        },
         "purchase_orders_cover_days_range": {
           "name": "purchase_orders_cover_days_range",
           "value": "\"purchase_orders\".\"cover_days\" between 1 and 365"
@@ -14617,6 +14599,101 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.supplier_contacts": {
+      "name": "supplier_contacts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "supplier_contacts_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "supplier_id": {
+          "name": "supplier_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "supplier_contacts_email": {
+          "name": "supplier_contacts_email",
+          "columns": [
+            {
+              "expression": "supplier_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "lower(\"email\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "supplier_contacts_supplier_id_suppliers_id_fk": {
+          "name": "supplier_contacts_supplier_id_suppliers_id_fk",
+          "tableFrom": "supplier_contacts",
+          "tableTo": "suppliers",
+          "columnsFrom": [
+            "supplier_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "supplier_contacts_email_shape": {
+          "name": "supplier_contacts_email_shape",
+          "value": "\"supplier_contacts\".\"email\" ~ '^[^@\\s]+@[^@\\s]+$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.supplier_invoices": {
       "name": "supplier_invoices",
       "schema": "",
@@ -14871,18 +14948,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "contact_name": {
-          "name": "contact_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "email": {
-          "name": "email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "phone": {
           "name": "phone",

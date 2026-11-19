@@ -7,6 +7,7 @@ import {
 	View,
 } from "@react-pdf/renderer";
 import { supplierUnit } from "#/lib/format";
+import type { SupplierContact } from "#/purchasing/contacts";
 import {
 	coveredUnits,
 	type Discount,
@@ -25,8 +26,9 @@ export type PurchaseOrderDocument = {
 	// Us: the delivery location's ship-from details.
 	buyer: Address & { email: string | null };
 	supplier: Address & {
-		contactName: string | null;
-		email: string | null;
+		// The first prints; the rest get the same email but would crowd the
+		// header.
+		contacts: readonly SupplierContact[];
 		paymentTerms: string | null;
 	};
 	notes: string[];
@@ -135,10 +137,12 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 					<View style={s.party}>
 						<Text style={s.label}>Supplier</Text>
 						<AddressLines address={po.supplier} />
-						{po.supplier.contactName && (
-							<Text>Attn: {po.supplier.contactName}</Text>
+						{po.supplier.contacts[0]?.name && (
+							<Text>Attn: {po.supplier.contacts[0].name}</Text>
 						)}
-						{po.supplier.email && <Text>{po.supplier.email}</Text>}
+						{po.supplier.contacts[0] && (
+							<Text>{po.supplier.contacts[0].email}</Text>
+						)}
 					</View>
 					<View style={s.party}>
 						<Text style={s.label}>Ship to</Text>

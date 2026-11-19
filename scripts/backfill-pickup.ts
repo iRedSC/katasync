@@ -1,4 +1,4 @@
-// One-time, after drizzle/0187: reads every Shopify order still on To ship
+// One-time, after drizzle/0188: reads every Shopify order still on To ship
 // again, so local pickups synced before katasync knew about them leave the
 // packing queue now instead of whenever Shopify next changes them. Each is
 // saved the way a webhook saves it. Safe to stop and run again. Without

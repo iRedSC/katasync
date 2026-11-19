@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatDay, formatMoney, formatTime } from "#/lib/format";
+import { recipientLabel } from "#/purchasing/contacts";
 import { describeTerms, lineCents } from "#/purchasing/discount";
 import {
 	type PurchaseOrderDetail,
@@ -55,7 +56,9 @@ export function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
 		events.push({
 			key: "sent",
 			at: new Date(po.sentAt),
-			body: po.sentTo ? `Sent to ${po.sentTo}` : "Marked as ordered",
+			body: po.sentTo
+				? `Sent to ${recipientLabel(po.sentTo, d.supplier.contacts)}`
+				: "Marked as ordered",
 		});
 	for (const r of d.receipts) {
 		const line = lines.get(r.lineId);

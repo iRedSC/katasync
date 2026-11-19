@@ -132,11 +132,11 @@ export {
 	type SupplierTableRow,
 } from "#/server/purchasing/supplier-detail";
 export {
+	addSupplierContact,
 	getProductSupplier,
 	listSuppliers,
 	type SupplierRow,
 	setBulkPrices,
-	setSupplierEmail,
 	setSupplierTerms,
 	updateSupplier,
 } from "#/server/purchasing/suppliers";

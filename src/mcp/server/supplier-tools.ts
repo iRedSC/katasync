@@ -411,8 +411,17 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 					.string()
 					.optional()
 					.describe("Short name shown where the full one won't fit, e.g. FCI"),
-				contact_name: z.string().nullable().optional(),
-				email: z.string().email().nullable().optional(),
+				contacts: z
+					.array(
+						z.object({
+							name: z.string().nullable().optional(),
+							email: z.string().email(),
+						}),
+					)
+					.optional()
+					.describe(
+						"Replaces the whole list. Every PO and damage report goes to all of them; the first prints on the PO",
+					),
 				phone: z.string().nullable().optional(),
 				address1: z.string().nullable().optional(),
 				address2: z.string().nullable().optional(),
@@ -448,8 +457,10 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 			await updateSupplier(db, id, {
 				name: input.name,
 				code: input.code,
-				contactName: input.contact_name,
-				email: input.email,
+				contacts: input.contacts?.map((c) => ({
+					name: c.name ?? null,
+					email: c.email,
+				})),
 				phone: input.phone,
 				address1: input.address1,
 				address2: input.address2,

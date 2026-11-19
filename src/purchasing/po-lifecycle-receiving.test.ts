@@ -73,7 +73,7 @@ describe("a PO from draft to received", () => {
 
 	test("receives in parts, averages cost, closes when complete, undoes", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
-		await markSent(db, { purchaseOrderId: id, sentTo: "a@b.c", now });
+		await markSent(db, { purchaseOrderId: id, sentTo: ["a@b.c"], now });
 		expect(await getPo(id)).toMatchObject({
 			status: "sent",
 			expectedAt: new Date("2026-10-20T12:00:00Z"),

@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { purchaseOrders, suppliers } from "#/db/schema";
 import { groupBy } from "#/lib/group-by";
+import { contactEmailsColumn, fromSupplier } from "#/purchasing/contacts";
 import { flagsOfEmails } from "#/purchasing/flags";
 import { inboxAddress } from "./graph";
 import {
@@ -15,8 +16,6 @@ import {
 // exports a plain function keeps its imports in the browser bundle, and
 // those reach the stock ledger's node:crypto, which stops every page from
 // starting.
-
-const domain = (a: string | null) => a?.toLowerCase().split("@")[1] ?? null;
 
 // PO numbers an email names: "PO 1234", "P.O. #1234", "order 1234", "#1234".
 export function mentionedPos(text: string) {
@@ -34,12 +33,11 @@ export type Likelihood = "mentions" | "supplier";
 
 export function likelihood(
 	email: { fromAddress: string; subject: string; body: string },
-	po: { id: number; supplierEmail: string | null },
+	po: { id: number; supplierEmails: readonly string[] },
 	mentions = mentionedPos(`${email.subject}\n${email.body}`),
 ): Likelihood | null {
 	if (mentions.has(po.id)) return "mentions";
-	const d = domain(po.supplierEmail);
-	return d !== null && d === domain(email.fromAddress) ? "supplier" : null;
+	return fromSupplier(email.fromAddress, po.supplierEmails) ? "supplier" : null;
 }
 
 // POs an email can go on: sent in the last half year, newest first.
@@ -50,7 +48,7 @@ export function recentPos(db: Db) {
 			sentAt: purchaseOrders.sentAt,
 			supplierId: suppliers.id,
 			supplier: suppliers.name,
-			supplierEmail: suppliers.email,
+			supplierEmails: contactEmailsColumn,
 		})
 		.from(purchaseOrders)
 		.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
@@ -100,7 +98,7 @@ export async function inboxPage(db: Db, view: InboxView) {
 					.map((p) => p.id),
 			};
 		}),
-		pos: pos.map(({ supplierEmail: _, ...p }) => p),
+		pos: pos.map(({ supplierEmails: _, ...p }) => p),
 	};
 }
 
@@ -111,7 +109,7 @@ export type InboxPage = Awaited<ReturnType<typeof inboxPage>>;
 export async function emailsToLink(db: Db, purchaseOrderId: number) {
 	const [[po], emails] = await Promise.all([
 		db
-			.select({ id: purchaseOrders.id, supplierEmail: suppliers.email })
+			.select({ id: purchaseOrders.id, supplierEmails: contactEmailsColumn })
 			.from(purchaseOrders)
 			.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
 			.where(eq(purchaseOrders.id, purchaseOrderId)),

@@ -74,12 +74,16 @@ describe("reading the inbox", () => {
 		const [location] = await db.select().from(schema.locations);
 		const [tsw] = await db
 			.insert(schema.suppliers)
-			.values({ code: "TSW", name: "Tool Source", email: "orders@tsw.com" })
+			.values({ code: "TSW", name: "Tool Source" })
 			.returning();
 		const [other] = await db
 			.insert(schema.suppliers)
-			.values({ code: "CAN", name: "Can-Am", email: "po@canam.com" })
+			.values({ code: "CAN", name: "Can-Am" })
 			.returning();
+		await db.insert(schema.supplierContacts).values([
+			{ supplierId: tsw.id, email: "orders@tsw.com", position: 0 },
+			{ supplierId: other.id, email: "po@canam.com", position: 0 },
+		]);
 		[{ id: sent }] = await db
 			.insert(schema.purchaseOrders)
 			.values({

@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
@@ -13,6 +13,7 @@ import {
 } from "#/db/schema";
 import type { PriceList } from "#/purchasing/bulk";
 import { breaksByOffer, bulkPricesOf } from "#/purchasing/bulk-prices";
+import { contactsColumn } from "#/purchasing/contacts";
 import { discountOf } from "#/purchasing/discount";
 import { renderPurchaseOrder } from "#/purchasing/document";
 import { poAddress } from "#/purchasing/inbox/graph";
@@ -46,7 +47,7 @@ export async function loadOrder(db: Db, poId: number) {
 	const [po] = await db
 		.select({
 			order: purchaseOrders,
-			supplier: suppliers,
+			supplier: { ...getTableColumns(suppliers), contacts: contactsColumn },
 			location: locations,
 		})
 		.from(purchaseOrders)
@@ -252,7 +253,7 @@ export async function documentFor(db: Db, poId: number) {
 export function supplierRows(db: Db) {
 	return db
 		.select({
-			supplier: suppliers,
+			supplier: { ...getTableColumns(suppliers), contacts: contactsColumn },
 			// Written out in full: in a one-table select Drizzle leaves column
 			// names unqualified, so a subquery's supplier_id would compare
 			// against its own table's id instead of the supplier's.

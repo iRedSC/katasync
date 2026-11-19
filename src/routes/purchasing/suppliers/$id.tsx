@@ -115,7 +115,7 @@ function ContactCard({ s, onEdit }: { s: Supplier; onEdit: () => void }) {
 	]
 		.filter(Boolean)
 		.join(", ");
-	const none = !s.contactName && !s.email && !s.phone && address === "";
+	const none = s.contacts.length === 0 && !s.phone && address === "";
 	return (
 		<Card
 			title="Contact"
@@ -139,19 +139,17 @@ function ContactCard({ s, onEdit }: { s: Supplier; onEdit: () => void }) {
 				</button>
 			) : (
 				<ul className="flex flex-col gap-2">
-					{s.contactName && (
-						<ContactLine icon={<User />}>{s.contactName}</ContactLine>
-					)}
-					{s.email && (
-						<ContactLine icon={<Mail />}>
+					{s.contacts.map((c) => (
+						<ContactLine key={c.email} icon={c.name ? <User /> : <Mail />}>
+							{c.name && <span>{c.name} </span>}
 							<a
-								href={`mailto:${s.email}`}
+								href={`mailto:${c.email}`}
 								className="text-link hover:underline"
 							>
-								{s.email}
+								{c.email}
 							</a>
 						</ContactLine>
-					)}
+					))}
 					{s.phone && (
 						<ContactLine icon={<Phone />}>
 							<a href={telHref(s.phone)} className="text-link hover:underline">

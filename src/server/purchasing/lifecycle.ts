@@ -2,12 +2,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
 
+import { greetingFor, recipientsOf } from "#/purchasing/contacts";
 import { sendEmail } from "#/purchasing/email";
-import {
-	greetingFor,
-	renderTemplate,
-	templateFor,
-} from "#/purchasing/email-templates";
+import { renderTemplate, templateFor } from "#/purchasing/email-templates";
 import { documentFor, loadOrder } from "#/purchasing/load";
 import {
 	cancelOrder,
@@ -33,9 +30,9 @@ export const previewPurchaseOrderEmail = createServerFn({ method: "GET" })
 		const template = await templateFor(db, "purchase_order");
 		const lines = po.lines.length;
 		return {
-			to: po.supplier.email,
+			to: po.supplier.contacts,
 			...renderTemplate<"purchase_order">(template, {
-				greeting: greetingFor(po.supplier.contactName),
+				greeting: greetingFor(po.supplier.contacts),
 				po: String(data.id),
 				supplier: po.supplier.name,
 				from: po.location.shipFromName ?? po.location.name,
@@ -78,10 +75,10 @@ export const sendPurchaseOrder = createServerFn({ method: "POST" })
 			// exactly what's saved as sent.
 			deliver: async (tx) => {
 				const { po, pdf, filename } = await documentFor(tx, data.id);
-				const to = po.supplier.email;
+				const to = recipientsOf(po.supplier.contacts);
 				if (!to)
 					throw new PurchaseOrderError(
-						`${po.supplier.name} has no email. Add one in Suppliers, or mark it sent.`,
+						`${po.supplier.name} has no contacts. Add one in Suppliers, or mark it sent.`,
 					);
 				await sendEmail({
 					purchaseOrderId: data.id,

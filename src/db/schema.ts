@@ -1894,9 +1894,6 @@ export const suppliers = pgTable("suppliers", {
 	id: integer().primaryKey().generatedAlwaysAsIdentity(),
 	code: text().notNull().unique(),
 	name: text().notNull(),
-	contactName: text(),
-	// Where POs are emailed.
-	email: text(),
 	phone: text(),
 	address1: text(),
 	address2: text(),
@@ -1924,6 +1921,33 @@ export const suppliers = pgTable("suppliers", {
 		.default(0),
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
+
+// Who a supplier's emails go to. Every PO and damage report goes to all of
+// them in one message. Rules live in src/purchasing/contacts.ts.
+export const supplierContacts = pgTable(
+	"supplier_contacts",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		supplierId: integer()
+			.notNull()
+			.references(() => suppliers.id, { onDelete: "cascade" }),
+		// Greeted by name when set: "Hi Ann,".
+		name: text(),
+		email: text().notNull(),
+		// Order in the supplier form; the first prints on the PO.
+		position: integer().notNull(),
+	},
+	(t) => [
+		uniqueIndex("supplier_contacts_email").on(
+			t.supplierId,
+			sql`lower(${t.email})`,
+		),
+		check(
+			"supplier_contacts_email_shape",
+			sql`${t.email} ~ '^[^@\\s]+@[^@\\s]+$'`,
+		),
+	],
+);
 
 // What suppliers sell in, e.g. CASE. Edited in Settings; renames carry over to
 // every product that uses the unit. EACH is one of the product itself, always
@@ -2138,8 +2162,9 @@ export const purchaseOrders = pgTable(
 		// Also suggest what this supplier sells but another sells for less.
 		includePricier: boolean().notNull().default(false),
 		sentAt: timestamp({ withTimezone: true }),
-		// The address it was emailed to, in case the supplier's email changes.
-		sentTo: text(),
+		// Who it was emailed to, kept as sent though the supplier's contacts
+		// change. Null when ordered another way.
+		sentTo: text().array(),
 		// When we expect it: sent date plus the supplier's lead time.
 		expectedAt: timestamp({ withTimezone: true }),
 		closedAt: timestamp({ withTimezone: true }),
@@ -2156,6 +2181,10 @@ export const purchaseOrders = pgTable(
 		// Lets a supplier invoice point at a PO and its supplier together, so
 		// an invoice can't name one supplier and a PO from another.
 		unique("purchase_orders_id_supplier").on(t.id, t.supplierId),
+		check(
+			"purchase_orders_sent_to_someone",
+			sql`${t.sentTo} is null or cardinality(${t.sentTo}) > 0`,
+		),
 		check(
 			"purchase_orders_cover_days_range",
 			sql`${t.coverDays} between 1 and 365`,
@@ -2962,10 +2991,17 @@ export const purchaseOrderDamageReports = pgTable(
 		purchaseOrderId: integer()
 			.notNull()
 			.references(() => purchaseOrders.id),
-		sentTo: text().notNull(),
+		// Who it was emailed to.
+		sentTo: text().array().notNull(),
 		sentAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [index("purchase_order_damage_reports_po_idx").on(t.purchaseOrderId)],
+	(t) => [
+		index("purchase_order_damage_reports_po_idx").on(t.purchaseOrderId),
+		check(
+			"purchase_order_damage_reports_sent_to_someone",
+			sql`cardinality(${t.sentTo}) > 0`,
+		),
+	],
 );
 
 // Items of a line that arrived damaged, or were missing from what arrived.

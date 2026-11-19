@@ -19,6 +19,7 @@ import {
 import { Tip } from "#/components/ui/tooltip";
 import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
+import { recipientLabel } from "#/purchasing/contacts";
 import { EMAIL_PHOTO_BYTES } from "#/purchasing/damage-limits";
 import {
 	type PurchaseOrderDetail,
@@ -52,12 +53,12 @@ export function DamageReportDialog({
 	const [preview, setPreview] = useState<EmailPreview | null>(null);
 	const guard = useCloseGuard();
 	const unchosen = damages.filter((x) => !remedies.has(x.id)).length;
-	const to = d.supplier.email;
+	const to = d.supplier.contacts.length > 0;
 	const photoBytes = damages.reduce((n, x) => n + x.photoBytes, 0);
 	const why = !d.emailConfigured
 		? "Email isn't set up here (RESEND_API_KEY and PO_EMAIL_FROM)"
 		: !to
-			? `${d.supplier.name} has no email. Add one under Supplier.`
+			? `${d.supplier.name} has no contacts. Add one under Supplier.`
 			: photoBytes > EMAIL_PHOTO_BYTES
 				? `The photos come to ${Math.round(photoBytes / 1_000_000)} MB, more than one email takes. Remove some under Received.`
 				: unchosen > 0
@@ -93,7 +94,9 @@ export function DamageReportDialog({
 		});
 		setSending(false);
 		if (!r) return;
-		toast.success(`Damage report emailed to ${r.value.sentTo}`);
+		toast.success(
+			`Damage report emailed to ${recipientLabel(r.value.sentTo, d.supplier.contacts)}`,
+		);
 		onClose();
 	}
 

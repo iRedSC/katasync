@@ -92,8 +92,7 @@ const supplierSearch = defineSearch<
 	text: (r) => [
 		r.supplier.name,
 		r.supplier.code,
-		r.supplier.contactName,
-		r.supplier.email,
+		...r.supplier.contacts.flatMap((c) => [c.name, c.email]),
 		r.supplier.city,
 		...r.catalogs.map((c) => c.name),
 	],
@@ -367,10 +366,10 @@ function Row({ r, now }: { r: SupplierTableRow; now: Date }) {
 							<Badge tone="info">Draft</Badge>
 						</Link>
 					)}
-					{!s.email && <Badge tone="warning">No email</Badge>}
+					{s.contacts.length === 0 && <Badge tone="warning">No contacts</Badge>}
 				</div>
 				<div className="truncate text-xs text-muted-foreground">
-					{[s.code, s.contactName].filter(Boolean).join(" · ")}
+					{[s.code, s.contacts[0]?.name].filter(Boolean).join(" · ")}
 				</div>
 			</td>
 			<td className="hidden px-4 py-2.5 lg:table-cell">
