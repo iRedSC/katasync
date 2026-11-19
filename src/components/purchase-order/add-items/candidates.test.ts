@@ -10,10 +10,11 @@ import type { BrowseRow, PurchaseOrderMatch } from "#/server/purchasing";
 import type { Recommendation } from "../types";
 import {
 	candidateRows,
+	NOT_ON_PO,
+	onPoShown,
 	type Prepared,
 	remoteWords,
 	scannedLine,
-	withoutOnPo,
 } from "./candidates";
 
 const facets = (text: string[], status: string[] = []): Facets => ({
@@ -213,7 +214,7 @@ describe("On PO", () => {
 		recs,
 		prepared: new Map(),
 		remote: { state: "off" },
-		chips: [],
+		chips: [NOT_ON_PO],
 		q: parseQuery(""),
 		sort: [],
 		sent: false,
@@ -222,12 +223,20 @@ describe("On PO", () => {
 		[10, 100],
 		[11, 101],
 	]);
+	const only = { ...NOT_ON_PO, exclude: false };
 
-	test("hides what's on the PO, but keeps what was just added here", () => {
-		const ids = (kept: number[]) =>
-			withoutOnPo(all, onPo, new Set(kept)).map((c) => c.productId);
-		expect(ids([])).toEqual([12]);
-		expect(ids([11])).toEqual([11, 12]);
+	test("the chip is no search: an empty box still lists everything", () => {
+		expect(all.map((c) => c.productId)).toEqual([10, 11, 12]);
+		expect(remoteWords(parseQuery("knife"), [NOT_ON_PO])).toBe("knife");
+	});
+
+	test("hides what's on the PO, or shows only that, keeping what was just added", () => {
+		const ids = (filters: Filter[], kept: number[]) =>
+			onPoShown(all, filters, onPo, new Set(kept)).map((c) => c.productId);
+		expect(ids([NOT_ON_PO], [])).toEqual([12]);
+		expect(ids([NOT_ON_PO], [11])).toEqual([11, 12]);
+		expect(ids([only], [])).toEqual([10, 11]);
+		expect(ids([], [])).toEqual([10, 11, 12]);
 	});
 
 	test("a scanned code already on the PO names its line, hidden or not", () => {

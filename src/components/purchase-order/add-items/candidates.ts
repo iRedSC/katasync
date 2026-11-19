@@ -219,15 +219,40 @@ export function fromMatch(m: PurchaseOrderMatch, sent: boolean): Candidate {
 
 type Query = ReturnType<typeof parseQuery>;
 
+// A status only this list knows: whether the product is already on this
+// PO. It isn't in any product's facets, since lines come and go while the
+// facets are built once per load; onPoShown applies it instead, so it
+// never counts as searching and never turns off other suppliers' matches.
+export const ON_PO = "on this PO";
+export const NOT_ON_PO: Filter = {
+	field: "status",
+	value: ON_PO,
+	exclude: true,
+	and: false,
+	exact: true,
+};
+export const isOnPoFilter = (f: Filter) =>
+	f.field === "status" && f.value.toLowerCase() === ON_PO.toLowerCase();
+
+// The query and chips with the on-PO filter taken out, for everything else.
+function rest(q: Query, chips: Filter[]) {
+	return {
+		q: { ...q, filters: q.filters.filter((f) => !isOnPoFilter(f)) },
+		chips: chips.filter((f) => !isOnPoFilter(f)),
+	};
+}
+
 // What to ask the server about anyone else's products: the words, but only
 // with no filter typed or chipped, since only this supplier's list can
 // answer a filter.
-export function remoteWords(q: Query, chips: Filter[]) {
+export function remoteWords(query: Query, all: Filter[]) {
+	const { q, chips } = rest(query, all);
 	return chips.length === 0 && q.filters.length === 0 ? q.words.join(" ") : "";
 }
 
 // Anything typed or chipped, a sort included, searches this supplier's list.
-export function isSearching(q: Query, chips: Filter[]) {
+export function isSearching(query: Query, all: Filter[]) {
+	const { q, chips } = rest(query, all);
 	return (
 		chips.length > 0 ||
 		q.words.length > 0 ||
@@ -256,6 +281,7 @@ export function candidateRows({
 	sort: Sort<Key>;
 	sent: boolean;
 }): Candidate[] {
+	({ q, chips } = rest(q, chips));
 	const found = isSearching(q, chips)
 		? searched({ recs, prepared, remote, chips, q, sent })
 		: everything(recs, prepared, sent);
@@ -338,20 +364,28 @@ function searched({
 	return found;
 }
 
-// What the On PO toggle leaves showing. Off, products already on the PO are
-// hidden, except ones added from this list since it last changed: a row
-// just added stays where it was, saying Added, instead of vanishing from
-// under the pointer.
-export function withoutOnPo(
+// What the on-PO filter leaves showing: `%!on this PO` hides products
+// already on the PO, `%on this PO` shows only them. Ones added from this
+// list since it last changed stay either way: a row just added stays where
+// it was, saying Added, instead of vanishing from under the pointer.
+export function onPoShown(
 	rows: Candidate[],
+	filters: Filter[],
 	onPo: ReadonlyMap<number, number>,
 	kept: ReadonlySet<number>,
 ): Candidate[] {
-	return rows.filter((c) => !onPo.has(c.productId) || kept.has(c.productId));
+	const fs = filters.filter(isOnPoFilter);
+	const hide = fs.some((f) => f.exclude);
+	const only = fs.some((f) => !f.exclude);
+	return rows.filter((c) => {
+		if (kept.has(c.productId)) return true;
+		const on = onPo.has(c.productId);
+		return !(hide && on) && !(only && !on);
+	});
 }
 
 // The line a whole code typed or scanned names, when its product is already
-// on the PO, whether or not the On PO toggle shows it: a scan of something
+// on the PO, whether or not the on-PO filter shows it: a scan of something
 // already ordered opens its line rather than adding whatever else matched.
 export function scannedLine(
 	rows: Candidate[],
