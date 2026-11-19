@@ -337,3 +337,33 @@ function searched({
 	);
 	return found;
 }
+
+// What the On PO toggle leaves showing. Off, products already on the PO are
+// hidden, except ones added from this list since it last changed: a row
+// just added stays where it was, saying Added, instead of vanishing from
+// under the pointer.
+export function withoutOnPo(
+	rows: Candidate[],
+	onPo: ReadonlyMap<number, number>,
+	kept: ReadonlySet<number>,
+): Candidate[] {
+	return rows.filter((c) => !onPo.has(c.productId) || kept.has(c.productId));
+}
+
+// The line a whole code typed or scanned names, when its product is already
+// on the PO, whether or not the On PO toggle shows it: a scan of something
+// already ordered opens its line rather than adding whatever else matched.
+export function scannedLine(
+	rows: Candidate[],
+	q: Query,
+	onPo: ReadonlyMap<number, number>,
+): { candidate: Candidate; lineId: number } | null {
+	const code = q.words.join(" ").toLowerCase();
+	if (code === "") return null;
+	for (const c of rows) {
+		const lineId = onPo.get(c.productId);
+		if (lineId !== undefined && c.codes.includes(code))
+			return { candidate: c, lineId };
+	}
+	return null;
+}

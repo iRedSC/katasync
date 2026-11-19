@@ -7,6 +7,7 @@ import { Card } from "#/components/page";
 import { remoteFor, usePurchaseOrderSearch } from "#/components/po-search";
 import { SortHeader } from "#/components/sort-header";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney } from "#/lib/format";
 import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
@@ -29,6 +30,8 @@ import {
 	type Key,
 	type Prepared,
 	remoteWords,
+	scannedLine,
+	withoutOnPo,
 } from "./add-items/candidates";
 import { useHoldInPlace } from "./add-items/hold-in-place";
 import { Row } from "./add-items/row";
@@ -40,6 +43,7 @@ import { useAction } from "./use-action";
 const PAGE = 100;
 // One array, so a sent PO's rows aren't rebuilt on every render.
 const NO_RECS: PurchaseOrderDetail["recommended"] = [];
+const NONE: ReadonlySet<number> = new Set();
 
 type Load =
 	| { state: "loading" }
@@ -75,6 +79,10 @@ export function AddItems({
 		{ key: "priority", desc: false },
 	]);
 	const [shown, setShown] = useState(PAGE);
+	// Off by default: the list is for what isn't on the PO yet.
+	const [showOnPo, setShowOnPo] = useState(false);
+	// Added from this list since it last changed, so they stay in view.
+	const [kept, setKept] = useState(NONE);
 	// The off-list product whose add is on its way, so its button can say so.
 	const [adding, setAdding] = useState<number | null>(null);
 	const q = useMemo(() => parseQuery(query), [query]);
@@ -144,13 +152,27 @@ export function AddItems({
 	const language = useMemo(() => productLanguage(counts), [counts]);
 
 	const recs = draft ? d.recommended : NO_RECS;
-	const rows = useMemo(
+	const all = useMemo(
 		() => candidateRows({ recs, prepared, remote, chips, q, sort, sent }),
 		[recs, prepared, remote, chips, q, sort, sent],
 	);
-
-	const onPo = new Map(d.lines.map((l) => [l.productId, l.id]));
+	const onPo = useMemo(
+		() => new Map(d.lines.map((l) => [l.productId, l.id])),
+		[d.lines],
+	);
+	const rows = useMemo(
+		() => (showOnPo ? all : withoutOnPo(all, onPo, kept)),
+		[all, showOnPo, onPo, kept],
+	);
+	const hidden = all.length - rows.length;
 	const short = d.supplier.minimumOrder - total;
+
+	// A new list: back to its first page, and rows added from the old one
+	// can go.
+	function relist() {
+		setShown(PAGE);
+		setKept(NONE);
+	}
 
 	function changeSort(next: Sort<Key>) {
 		setSort(next);
@@ -225,6 +247,7 @@ export function AddItems({
 	const holdInPlace = useHoldInPlace(listRef);
 	function addInPlace(c: Candidate) {
 		holdInPlace(c.productId);
+		setKept((k) => new Set(k).add(c.productId));
 		add(c);
 	}
 
@@ -234,14 +257,20 @@ export function AddItems({
 		const first = rows[0];
 		// While anyone else's products may still come, one could lead.
 		if (remote.state === "pending") return;
-		if (!searching || !first || busy || first.warning?.blocks) return;
-		const lineId = onPo.get(first.productId);
-		if (lineId !== undefined) {
-			toast(`${first.sku} is already on this PO`);
-			onFocusLine(lineId);
+		if (!searching || busy) return;
+		const firstLine = first && onPo.get(first.productId);
+		const onLine =
+			scannedLine(all, q, onPo) ??
+			(first && firstLine !== undefined
+				? { candidate: first, lineId: firstLine }
+				: null);
+		if (onLine) {
+			toast(`${onLine.candidate.sku} is already on this PO`);
+			onFocusLine(onLine.lineId);
 			setQuery("");
 			return;
 		}
+		if (!first || first.warning?.blocks) return;
 		const added = await add(first);
 		if (added === null) return;
 		setQuery("");
@@ -286,6 +315,7 @@ export function AddItems({
 						if (query || chips.length) {
 							setQuery("");
 							setChips([]);
+							relist();
 						} else inputRef.current?.blur();
 					}}
 				>
@@ -295,12 +325,12 @@ export function AddItems({
 							text={query}
 							onText={(t) => {
 								setQuery(t);
-								setShown(PAGE);
+								relist();
 							}}
 							chips={chips}
 							onChips={(next) => {
 								setChips(next);
-								setShown(PAGE);
+								relist();
 							}}
 							language={language}
 							sorting={{ sort, onSort: changeSort, columns: COLUMNS }}
@@ -312,10 +342,18 @@ export function AddItems({
 						counts={counts}
 						onAdd={(f) => {
 							setChips([...chips, f]);
-							setShown(PAGE);
+							relist();
 						}}
 					/>
 					<SortMenu sort={sort} onSort={changeSort} columns={COLUMNS} />
+					<OnPoToggle
+						on={showOnPo}
+						hidden={hidden}
+						onChange={(on) => {
+							setShowOnPo(on);
+							relist();
+						}}
+					/>
 					{(remote.state === "pending" ||
 						(!searching && load.state === "loading")) && (
 						<Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
@@ -345,6 +383,21 @@ export function AddItems({
 						<Loader2 className="size-4 animate-spin" />
 						Searching
 					</p>
+				) : rows.length === 0 && hidden > 0 ? (
+					<div className="flex flex-col items-center gap-3 border-t px-4 py-6">
+						<p className="text-muted-foreground">
+							{searching ? "Every match is" : "Everything is"} on this PO
+						</p>
+						<Button
+							variant="outline"
+							onClick={() => {
+								setShowOnPo(true);
+								relist();
+							}}
+						>
+							Show {formatCount(hidden)}
+						</Button>
+					</div>
 				) : rows.length === 0 ? (
 					<p className="border-t px-4 py-6 text-center text-muted-foreground">
 						{searching ? "No matches" : "This supplier sells nothing yet"}
@@ -433,5 +486,37 @@ export function AddItems({
 				)}
 			</Card>
 		</div>
+	);
+}
+
+// Shows or hides what's already on the PO. Off, it counts what it hides, so
+// a short list explains itself.
+function OnPoToggle({
+	on,
+	hidden,
+	onChange,
+}: {
+	on: boolean;
+	hidden: number;
+	onChange: (on: boolean) => void;
+}) {
+	return (
+		<Tip content={on ? "Hide what's on this PO" : "Show what's on this PO"}>
+			<button
+				type="button"
+				aria-pressed={on}
+				onClick={() => onChange(!on)}
+				className={cn(
+					"inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-white px-2.5 text-sm text-muted-foreground hover:bg-subtle",
+					on &&
+						"border-primary bg-primary text-primary-foreground hover:bg-primary",
+				)}
+			>
+				On PO
+				{!on && hidden > 0 && (
+					<span className="tabular-nums text-xs">{formatCount(hidden)}</span>
+				)}
+			</button>
+		</Tip>
 	);
 }
