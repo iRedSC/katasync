@@ -7,13 +7,17 @@ import { Card } from "#/components/page";
 import { remoteFor, usePurchaseOrderSearch } from "#/components/po-search";
 import { SortHeader } from "#/components/sort-header";
 import { Button } from "#/components/ui/button";
-import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney } from "#/lib/format";
 import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { productLanguage } from "#/products/language";
 import { facetsOf, sortValuesOf, stateOf } from "#/products/rows";
-import { type Filter, facetCounts, parseQuery } from "#/products/search";
+import {
+	type Filter,
+	facetCounts,
+	parseQuery,
+	parseWord,
+} from "#/products/search";
 import type { Sort } from "#/products/sort";
 import {
 	addProductToPurchaseOrder,
@@ -26,12 +30,15 @@ import {
 	type Candidate,
 	COLUMNS,
 	candidateRows,
+	isOnPoFilter,
 	isSearching,
 	type Key,
+	NOT_ON_PO,
+	ON_PO,
+	onPoShown,
 	type Prepared,
 	remoteWords,
 	scannedLine,
-	withoutOnPo,
 } from "./add-items/candidates";
 import { useHoldInPlace } from "./add-items/hold-in-place";
 import { Row } from "./add-items/row";
@@ -44,6 +51,10 @@ const PAGE = 100;
 // One array, so a sent PO's rows aren't rebuilt on every render.
 const NO_RECS: PurchaseOrderDetail["recommended"] = [];
 const NONE: ReadonlySet<number> = new Set();
+// The list is for what isn't on the PO yet; removing the chip shows it all.
+const START: Filter[] = [NOT_ON_PO];
+const isStart = (chips: Filter[]) =>
+	chips.length === 1 && chips[0] === NOT_ON_PO;
 
 type Load =
 	| { state: "loading" }
@@ -73,14 +84,12 @@ export function AddItems({
 	// Sent POs: what's added stays here, the supplier isn't told.
 	const sent = !draft;
 	const [query, setQuery] = useState("");
-	const [chips, setChips] = useState<Filter[]>([]);
+	const [chips, setChips] = useState<Filter[]>(START);
 	// Priority first: what to buy before anything else.
 	const [sort, setSort] = useState<Sort<Key>>([
 		{ key: "priority", desc: false },
 	]);
 	const [shown, setShown] = useState(PAGE);
-	// Off by default: the list is for what isn't on the PO yet.
-	const [showOnPo, setShowOnPo] = useState(false);
 	// Added from this list since it last changed, so they stay in view.
 	const [kept, setKept] = useState(NONE);
 	// The off-list product whose add is on its way, so its button can say so.
@@ -145,26 +154,43 @@ export function AddItems({
 			),
 		[catalog, now, ranks],
 	);
-	const counts = useMemo(
-		() => facetCounts([...prepared.values()].map((p) => p.facets)),
-		[prepared],
+	const onPo = useMemo(
+		() => new Map(d.lines.map((l) => [l.productId, l.id])),
+		[d.lines],
 	);
-	const language = useMemo(() => productLanguage(counts), [counts]);
+	// Every product's statuses, and this list's own: on this PO.
+	const counts = useMemo(() => {
+		const out = facetCounts([...prepared.values()].map((p) => p.facets));
+		out.set(
+			"status",
+			new Map([...(out.get("status") ?? []), [ON_PO, onPo.size]]),
+		);
+		return out;
+	}, [prepared, onPo]);
+	const language = useMemo(() => {
+		const base = productLanguage(counts);
+		return {
+			...base,
+			// "on PO false", not "not status on this PO".
+			label: (f: Filter) => (isOnPoFilter(f) ? "on PO" : base.label(f)),
+			show: (f: Filter) =>
+				isOnPoFilter(f) ? (f.exclude ? "false" : "true") : f.value,
+		};
+	}, [counts]);
 
 	const recs = draft ? d.recommended : NO_RECS;
 	const all = useMemo(
 		() => candidateRows({ recs, prepared, remote, chips, q, sort, sent }),
 		[recs, prepared, remote, chips, q, sort, sent],
 	);
-	const onPo = useMemo(
-		() => new Map(d.lines.map((l) => [l.productId, l.id])),
-		[d.lines],
-	);
 	const rows = useMemo(
-		() => (showOnPo ? all : withoutOnPo(all, onPo, kept)),
-		[all, showOnPo, onPo, kept],
+		() => onPoShown(all, [...chips, ...q.filters], onPo, kept),
+		[all, chips, q, onPo, kept],
 	);
 	const hidden = all.length - rows.length;
+	const hiding = [...chips, ...q.filters].some(
+		(f) => isOnPoFilter(f) && f.exclude,
+	);
 	const short = d.supplier.minimumOrder - total;
 
 	// A new list: back to its first page, and rows added from the old one
@@ -312,9 +338,9 @@ export function AddItems({
 					onKeyDown={(e) => {
 						if (e.key !== "Escape" || e.target !== inputRef.current) return;
 						e.stopPropagation();
-						if (query || chips.length) {
+						if (query || !isStart(chips)) {
 							setQuery("");
-							setChips([]);
+							setChips(START);
 							relist();
 						} else inputRef.current?.blur();
 					}}
@@ -346,18 +372,6 @@ export function AddItems({
 						}}
 					/>
 					<SortMenu sort={sort} onSort={changeSort} columns={COLUMNS} />
-					<OnPoToggle
-						on={showOnPo}
-						hidden={hidden}
-						onChange={(on) => {
-							setShowOnPo(on);
-							relist();
-						}}
-					/>
-					{(remote.state === "pending" ||
-						(!searching && load.state === "loading")) && (
-						<Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
-					)}
 				</div>
 				{load.state === "failed" && (searching || rows.length === 0) ? (
 					<div className="flex flex-col items-center gap-3 border-t px-4 py-10">
@@ -386,12 +400,23 @@ export function AddItems({
 				) : rows.length === 0 && hidden > 0 ? (
 					<div className="flex flex-col items-center gap-3 border-t px-4 py-6">
 						<p className="text-muted-foreground">
-							{searching ? "Every match is" : "Everything is"} on this PO
+							{hiding
+								? `${searching ? "Every match is" : "Everything is"} on this PO`
+								: "Nothing here is on this PO yet"}
 						</p>
 						<Button
 							variant="outline"
 							onClick={() => {
-								setShowOnPo(true);
+								setChips(chips.filter((f) => !isOnPoFilter(f)));
+								setQuery(
+									query
+										.split(/\s+/)
+										.filter((w) => {
+											const f = parseWord(w);
+											return !(f && isOnPoFilter(f));
+										})
+										.join(" "),
+								);
 								relist();
 							}}
 						>
@@ -486,37 +511,5 @@ export function AddItems({
 				)}
 			</Card>
 		</div>
-	);
-}
-
-// Shows or hides what's already on the PO. Off, it counts what it hides, so
-// a short list explains itself.
-function OnPoToggle({
-	on,
-	hidden,
-	onChange,
-}: {
-	on: boolean;
-	hidden: number;
-	onChange: (on: boolean) => void;
-}) {
-	return (
-		<Tip content={on ? "Hide what's on this PO" : "Show what's on this PO"}>
-			<button
-				type="button"
-				aria-pressed={on}
-				onClick={() => onChange(!on)}
-				className={cn(
-					"inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-white px-2.5 text-sm text-muted-foreground hover:bg-subtle",
-					on &&
-						"border-primary bg-primary text-primary-foreground hover:bg-primary",
-				)}
-			>
-				On PO
-				{!on && hidden > 0 && (
-					<span className="tabular-nums text-xs">{formatCount(hidden)}</span>
-				)}
-			</button>
-		</Tip>
 	);
 }
