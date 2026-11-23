@@ -73,11 +73,15 @@ export function AddItems({
 	total,
 	inputRef,
 	onFocusLine,
+	onGoToLine,
 }: {
 	detail: PurchaseOrderDetail;
 	total: number;
 	inputRef: RefObject<HTMLInputElement | null>;
+	// A line just added here.
 	onFocusLine: (lineId: number) => void;
+	// A line already on the PO, asked for by name.
+	onGoToLine: (lineId: number) => void;
 }) {
 	const { busy, run, save } = useAction();
 	const draft = isUnsent(d.order.status);
@@ -292,7 +296,7 @@ export function AddItems({
 				: null);
 		if (onLine) {
 			toast(`${onLine.candidate.sku} is already on this PO`);
-			onFocusLine(onLine.lineId);
+			onGoToLine(onLine.lineId);
 			setQuery("");
 			return;
 		}
@@ -492,7 +496,7 @@ export function AddItems({
 										adding={adding === c.productId}
 										disabled={busy}
 										onAdd={() => addInPlace(c)}
-										onGoToLine={onFocusLine}
+										onGoToLine={onGoToLine}
 									/>
 								))}
 							</tbody>
