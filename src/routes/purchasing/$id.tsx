@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
+	ChevronDown,
 	FileText,
 	Mail,
 	PackageCheck,
@@ -7,6 +8,7 @@ import {
 	Smartphone,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import {
 	DamageDetailsDialog,
@@ -52,6 +54,7 @@ import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { cn } from "#/lib/utils";
 import { lineCents } from "#/purchasing/discount";
 import { purchaseOrderStatus, takenByReceiveAll } from "#/purchasing/status";
 import { getPurchaseOrder, sendPurchaseOrder } from "#/server/purchasing";
@@ -86,6 +89,24 @@ function PurchaseOrderPage() {
 	// quantity open. The nonce reopens it when picked again.
 	const [focus, setFocus] = useState<LineFocus | null>(null);
 	const [lineSort, setLineSort] = useState<LineSort>([]);
+	// Lines folded away, so adding below them can't move the list: only the
+	// totals stay, and they tick up as products go on.
+	const [linesOpen, setLinesOpen] = useState(true);
+	// The lines fold or open above the toggle, so the page scrolls by however
+	// far it moved, keeping it under the pointer.
+	const toggleRef = useRef<HTMLButtonElement>(null);
+	const toggleLines = () => {
+		const el = toggleRef.current;
+		const before = el?.getBoundingClientRect().top;
+		flushSync(() => setLinesOpen((o) => !o));
+		if (el && before !== undefined)
+			window.scrollBy(0, el.getBoundingClientRect().top - before);
+	};
+	// Asked for by name, as from Added: the lines open to show it.
+	const goToLine = (lineId: number) => {
+		setLinesOpen(true);
+		setFocus({ lineId, nonce: Date.now() });
+	};
 	// Counted in the product itself, so 2 cases of 12 are 24.
 	const ordered = d.lines.reduce((n, l) => n + l.quantity * l.packSize, 0);
 	const received = d.lines.reduce(
@@ -146,35 +167,56 @@ function PurchaseOrderPage() {
 	const arrived = d.lines
 		.filter((l) => l.received >= l.quantity)
 		.sort((a, b) => Number(a.quantity === 0) - Number(b.quantity === 0));
-	const lineTable = (lines: Line[]) => (
-		<LineTable
-			detail={d}
-			lines={lines}
-			sort={lineSort}
-			onSort={setLineSort}
-			focus={focus}
-			onEditQuantity={(lineId) => setFocus({ lineId, nonce: Date.now() })}
-			onOpenDamage={setOpenDamageId}
-			onReportDamage={(l, damage) =>
-				setDamageTarget({
-					kind: "new",
-					damage,
-					lineId: l.id,
-					name: lineName(l),
-					available: damageable(d, l),
-					unit: l.packSize === 1 ? null : l.unit,
-				})
-			}
-			onQuantityDone={(enter) => {
-				setFocus(null);
-				if (enter) picker.current?.focus();
-			}}
-		/>
-	);
+	const lineTable = (lines: Line[]) =>
+		linesOpen && (
+			<LineTable
+				detail={d}
+				lines={lines}
+				sort={lineSort}
+				onSort={setLineSort}
+				focus={focus}
+				onEditQuantity={(lineId) => setFocus({ lineId, nonce: Date.now() })}
+				onOpenDamage={setOpenDamageId}
+				onReportDamage={(l, damage) =>
+					setDamageTarget({
+						kind: "new",
+						damage,
+						lineId: l.id,
+						name: lineName(l),
+						available: damageable(d, l),
+						unit: l.packSize === 1 ? null : l.unit,
+					})
+				}
+				onQuantityDone={(enter) => {
+					setFocus(null);
+					if (enter) picker.current?.focus();
+				}}
+			/>
+		);
 	const totals = (
 		<>
 			<ChargesRow detail={d} />
 			<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
+				{d.lines.length > 0 && (
+					<Tip content={linesOpen ? "Hide lines" : "Show lines"}>
+						<Button
+							ref={toggleRef}
+							size="icon-xs"
+							variant="ghost"
+							aria-label={linesOpen ? "Hide lines" : "Show lines"}
+							aria-expanded={linesOpen}
+							className="mr-auto text-muted-foreground"
+							onClick={toggleLines}
+						>
+							<ChevronDown
+								className={cn(
+									"transition-transform",
+									!linesOpen && "-rotate-90",
+								)}
+							/>
+						</Button>
+					</Tip>
+				)}
 				<span className="text-muted-foreground">
 					{formatCount(shown.units)} {shown.units === 1 ? "unit" : "units"}
 					{shown.unpriced > 0 && `, ${shown.unpriced} unpriced`}
@@ -194,7 +236,12 @@ function PurchaseOrderPage() {
 			detail={d}
 			total={total}
 			inputRef={picker}
-			onFocusLine={(lineId) => setFocus({ lineId, nonce: Date.now() })}
+			// A line just added opens its quantity, unless the lines are folded
+			// away to add without them moving.
+			onFocusLine={(lineId) => {
+				if (linesOpen) setFocus({ lineId, nonce: Date.now() });
+			}}
+			onGoToLine={goToLine}
 		/>
 	);
 
