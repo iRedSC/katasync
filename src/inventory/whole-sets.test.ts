@@ -99,13 +99,21 @@ describe("a tool set with whole sets", () => {
 		expect(await shelf(ratchet)).toBe(4);
 		expect(await world.available(set)).toBe(4);
 		expect(await wholeToPack(db, [orderId])).toEqual(
-			new Map([[`${orderId}:${set}`, { sku: "SET-WHOLE", units: 3 }]]),
+			new Map([[`${orderId}:line-1`, { sku: "SET-WHOLE", units: 3 }]]),
 		);
 		// The next one finds no boxes and sells from parts as it always did.
 		const next = await order(1, "gid://shopify/Order/2");
 		expect(await shelf(whole)).toBe(0);
 		expect(await shelf(socket)).toBe(6);
 		expect(await wholeToPack(db, [next.orderId])).toEqual(new Map());
+	});
+
+	test("boxes sold and not shipped yet still hold the set's parts", async () => {
+		await order(3);
+		expect(await shelf(whole)).toBe(0);
+		await expect(
+			setRecipe(db, set, [{ productId: socket, quantity: 3 }]),
+		).rejects.toThrow("promised to orders hold the old parts");
 	});
 
 	test("a box sold counts as the set's parts sold", async () => {
@@ -199,7 +207,7 @@ describe("a tool set with whole sets, once stock is committed", () => {
 		expect(await world.available(set)).toBe(4);
 		expect(await world.available(socket)).toBe(8);
 		expect(await wholeToPack(db, [orderId])).toEqual(
-			new Map([[`${orderId}:${set}`, { sku: "SET-WHOLE", units: 3 }]]),
+			new Map([[`${orderId}:line-1`, { sku: "SET-WHOLE", units: 3 }]]),
 		);
 
 		await addDispatch(db, { orderIds: [orderId] });
@@ -210,7 +218,7 @@ describe("a tool set with whole sets, once stock is committed", () => {
 		});
 		expect(await shelf(whole)).toBe(1);
 		expect(await shelf(socket)).toBe(10);
-		expect((await wholeToPack(db, [orderId])).get(`${orderId}:${set}`)).toEqual(
+		expect((await wholeToPack(db, [orderId])).get(`${orderId}:line-1`)).toEqual(
 			{ sku: "SET-WHOLE", units: 1 },
 		);
 
@@ -322,7 +330,7 @@ describe("a tool set with whole sets, once stock is committed", () => {
 		expect(await committed(socket)).toBe(2);
 		expect(
 			(await wholeToPack(db, [first.orderId, second.orderId])).get(
-				`${second.orderId}:${set}`,
+				`${second.orderId}:line-1`,
 			),
 		).toEqual({ sku: "SET-WHOLE", units: 1 });
 
@@ -348,7 +356,7 @@ describe("a tool set with whole sets, once stock is committed", () => {
 		const third = await order(3, "gid://shopify/Order/3");
 		expect(await committed(whole)).toBe(3);
 		expect(
-			(await wholeToPack(db, [third.orderId])).get(`${third.orderId}:${set}`),
+			(await wholeToPack(db, [third.orderId])).get(`${third.orderId}:line-1`),
 		).toEqual({ sku: "SET-WHOLE", units: 2 });
 	});
 

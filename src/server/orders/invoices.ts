@@ -183,18 +183,12 @@ export const listInvoices = createServerFn({ method: "GET" })
 				const packed = packing(o);
 				const key = keys.get(o.id);
 				const last = key === undefined ? undefined : lastPacked.get(key);
-				// Two lines of one set share what the order holds whole.
-				const boxes = new Map<number, number>();
+				// Each line picks the boxes it holds itself, never another
+				// line's.
 				const wholeOf = (l: (typeof own)[number]) => {
-					const held =
-						l.productId === null
-							? undefined
-							: whole.get(`${o.id}:${l.productId}`);
-					if (!held || l.productId === null || typeof l.toPack !== "number")
-						return null;
-					const left = boxes.get(l.productId) ?? held.units;
-					const units = Math.min(l.toPack, left);
-					boxes.set(l.productId, left - units);
+					const held = whole.get(`${o.id}:${l.lineExternalId}`);
+					if (!held || typeof l.toPack !== "number") return null;
+					const units = Math.min(l.toPack, held.units);
 					return units > 0 ? { sku: held.sku, units } : null;
 				};
 				return {

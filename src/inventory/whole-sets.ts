@@ -180,7 +180,18 @@ export async function refitWholeSet(
 		.where(
 			and(eq(committedStock.productId, kitId), ne(committedStock.units, 0)),
 		);
-	if (shelves.length > 0 || promised) {
+	// Sold as an order synced and not shipped yet: off the shelf already, with
+	// no reservation to show for it.
+	const sold = (await db.execute(sql`
+		select 1 from order_lines l
+		join orders o on o.id = l.order_id
+		join movements m on m.batch_id = l.sale_batch_id and m.reason = 'sale'
+		where m.product_id = ${kitId} and o.cancelled_at is null
+			and coalesce(l.shipped_quantity, 0) < l.quantity
+			and not exists (select 1 from movements u where u.reference = 'undo:' || m.batch_id::text)
+		limit 1
+	`)) as unknown as { rows: unknown[] };
+	if (shelves.length > 0 || promised || sold.rows.length > 0) {
 		const boxes = shelves.reduce((n, s) => n + s.onHand, 0);
 		throw new LedgerError(
 			shelves.length > 0
@@ -201,11 +212,12 @@ export async function refitWholeSet(
 	);
 }
 
-// How many whole sets each order still holds of each tool set, for the
-// invoice to say what to pick: keyed `${orderId}:${setId}`, with the whole
-// sets' SKU. An order holds them as a reservation, or, taking stock as it
-// syncs, as the sale it recorded less what has shipped; whole sets go out
-// first either way.
+// How many whole sets each order line still holds, for the invoice to say
+// what to pick: keyed `${orderId}:${the line's external id}`, with the whole
+// sets' SKU. A line holds them as a reservation, or, taking stock as it
+// syncs, as the sale it recorded less what has shipped: what the channel
+// says shipped, or what our own dispatches handed off when that's more (the
+// channel's count can lag a handoff). Whole sets go out first either way.
 export async function wholeToPack(db: Db, orderIds: number[]) {
 	const held = new Map<string, { sku: string; units: number }>();
 	if (orderIds.length === 0) return held;
@@ -214,33 +226,40 @@ export async function wholeToPack(db: Db, orderIds: number[]) {
 		sql`, `,
 	);
 	const result = (await db.execute(sql`
-		select k.order_id, k.product_id as set_id, w.sku,
+		select k.order_id, l.external_id, w.sku,
 			sum(k.quantity - commitment_settled(k.id))::int as units
 		from stock_commitments k
+		join order_lines l on l.id = k.order_line_id
 		join stock_commitment_parts p on p.commitment_id = k.id
 		join products w on w.id = p.product_id and w.whole_set_of_id = k.product_id
 		where k.order_id in (${ids})
-		group by k.order_id, k.product_id, w.sku
+		group by k.order_id, l.external_id, w.sku
 		union all
-		select s.order_id, s.set_id, s.sku, sum(greatest(s.units - s.shipped, 0))::int
-		from (
-			select l.id, l.order_id, l.product_id as set_id, w.sku,
-				sum(-m.delta) as units, coalesce(l.shipped_quantity, 0) as shipped
-			from order_lines l
-			join movements m on m.batch_id = l.sale_batch_id and m.reason = 'sale'
-			join products w on w.id = m.product_id and w.whole_set_of_id = l.product_id
-			where l.order_id in (${ids})
-				and not exists (select 1 from movements u where u.reference = 'undo:' || m.batch_id::text)
-			group by l.id, l.order_id, l.product_id, w.sku, l.shipped_quantity
-		) s
-		group by s.order_id, s.set_id, s.sku
+		select l.order_id, l.external_id, w.sku,
+			greatest(sum(-m.delta) - greatest(coalesce(l.shipped_quantity, 0), coalesce((
+				select sum(d.quantity) from dispatch_lines d
+				join dispatch_orders o on o.dispatch_id = d.dispatch_id and o.order_id = d.order_id
+				where d.order_id = l.order_id and d.line_external_id = l.external_id
+					and o.channel_sent_at is not null and o.reversed_at is null
+			), 0)), 0)::int
+		from order_lines l
+		join movements m on m.batch_id = l.sale_batch_id and m.reason = 'sale'
+		join products w on w.id = m.product_id and w.whole_set_of_id = l.product_id
+		where l.order_id in (${ids})
+			and not exists (select 1 from movements u where u.reference = 'undo:' || m.batch_id::text)
+		group by l.id, l.order_id, l.external_id, w.sku, l.shipped_quantity
 	`)) as unknown as {
-		rows: { order_id: number; set_id: number; sku: string; units: number }[];
+		rows: {
+			order_id: number;
+			external_id: string;
+			sku: string;
+			units: number;
+		}[];
 	};
 	for (const row of result.rows) {
 		const units = Number(row.units);
 		if (units > 0)
-			held.set(`${Number(row.order_id)}:${Number(row.set_id)}`, {
+			held.set(`${Number(row.order_id)}:${row.external_id}`, {
 				sku: row.sku,
 				units,
 			});
