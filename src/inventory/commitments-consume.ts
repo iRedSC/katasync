@@ -19,6 +19,7 @@ import {
 	lockedHolds,
 	shippingShelves,
 } from "./commitments-shelves";
+import { wholeSetsOf } from "./whole-sets";
 
 export { ConsumeError } from "./commitments-shelves";
 
@@ -110,14 +111,28 @@ export async function evidenceUnder(
 	}));
 }
 
-export function splitOverOpen(history: LineHistory, quantity: number) {
+// What a shipment of `quantity` takes from the line's open revisions, oldest
+// first, except that whole sets (src/inventory/whole-sets.ts) go before
+// loose parts whichever was reserved first, as the invoice says to pick
+// them (wholeToPack).
+export function splitOverOpen(
+	history: LineHistory,
+	quantity: number,
+	whole: Map<number, number> = new Map(),
+) {
+	const boxed = (r: LineHistory["open"][number]) =>
+		r.parts.some((p) => p.productId === whole.get(r.productId));
+	const open = [
+		...history.open.filter(boxed),
+		...history.open.filter((r) => !boxed(r)),
+	];
 	const takes: {
 		commitmentId: number;
 		quantity: number;
 		parts: LineHistory["open"][number]["parts"];
 	}[] = [];
 	let left = quantity;
-	for (const revision of history.open) {
+	for (const revision of open) {
 		if (left === 0) break;
 		const take = Math.min(left, revision.remaining);
 		takes.push({
@@ -174,6 +189,11 @@ export async function consumeCommitments(
 		);
 		await lockStockProducts(tx, [...locked]);
 		const histories = await lineHistories(tx, ids);
+		const whole = await wholeSetsOf(tx, [
+			...new Set(
+				[...histories.values()].flatMap((h) => h.open.map((r) => r.productId)),
+			),
+		]);
 		const earlier = await entriesUnder(tx, ids, key);
 		const evidence = await evidenceUnder(tx, ids, key);
 		const consumed: ConsumedLine[] = [];
@@ -228,7 +248,7 @@ export async function consumeCommitments(
 				untracked.push({ ...line, why: "shipped_unreserved", repeated: false });
 				continue;
 			}
-			const takes = splitOverOpen(history, line.quantity);
+			const takes = splitOverOpen(history, line.quantity, whole);
 			if (!takes)
 				throw new ConsumeError(
 					`Line ${line.orderLineId} has ${history.remaining} reserved, not ${line.quantity}`,
@@ -289,11 +309,15 @@ export async function consumeCommitments(
 	});
 }
 
+// The sale a return of this line comes back from: every shipment of it
+// still standing, taken together, since one may have gone out as whole sets
+// and another as parts. `batchId` is the first, for callers that only need
+// to find the sale.
 export async function returnSaleOf(
 	db: Db,
 	orderLineId: number,
-): Promise<{ batchId: string; quantity: number } | null> {
-	const [entry] = await db
+): Promise<{ batchId: string; batchIds: string[]; quantity: number } | null> {
+	const entries = await db
 		.select({
 			batchId: sql<string>`${stockCommitmentEntries.batchId}`,
 			quantity: sql<number>`sum(${stockCommitmentEntries.quantity})::int`,
@@ -311,9 +335,11 @@ export async function returnSaleOf(
 			),
 		)
 		.groupBy(stockCommitmentEntries.batchId)
-		.orderBy(sql`min(${stockCommitmentEntries.id})`)
-		.limit(1);
-	return entry
-		? { batchId: entry.batchId, quantity: Number(entry.quantity) }
-		: null;
+		.orderBy(sql`min(${stockCommitmentEntries.id})`);
+	if (entries.length === 0) return null;
+	return {
+		batchId: entries[0].batchId,
+		batchIds: entries.map((e) => e.batchId),
+		quantity: entries.reduce((n, e) => n + Number(e.quantity), 0),
+	};
 }

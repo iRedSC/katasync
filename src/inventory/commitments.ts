@@ -9,6 +9,8 @@ import {
 } from "#/db/quantity-schema";
 import { orderLines, orders, stores } from "#/db/schema";
 import { lockRecipes } from "#/inventory/ledger/post";
+import { lockedHolds, shipsFrom } from "./commitments-shelves";
+import { lockedWholeSet, wholeSetOf } from "./whole-sets";
 
 export type Part = { productId: number; perUnit: number };
 
@@ -135,6 +137,10 @@ export type Settlement =
 	  }
 	| { kind: "overshipped"; consumed: number; target: number };
 
+// Brings a line's reservation to `target` units. A tool set with whole sets
+// (src/inventory/whole-sets.ts) reserves those first, as many as are free,
+// and its parts for the rest: two commitments made together, the whole sets
+// first so a part shipment takes them first.
 export async function settleLine(
 	db: Db,
 	input: {
@@ -158,13 +164,18 @@ export async function settleLine(
 			.where(eq(orders.id, input.orderId))
 			.for("no key update");
 		const history = await lineHistory(tx, input.orderLineId);
+		const wholeId = await wholeSetOf(tx, input.productId);
 		await lockRecipes(
 			tx,
 			[input.productId],
-			history.revisions.flatMap((revision) =>
-				revision.parts.map((part) => part.productId),
-			),
+			[
+				...history.revisions.flatMap((revision) =>
+					revision.parts.map((part) => part.productId),
+				),
+				...(wholeId === null ? [] : [wholeId]),
+			],
 		);
+		await lockedWholeSet(tx, input.productId, wholeId);
 		const { latest } = history;
 		const sameProduct = latest?.productId === input.productId;
 		const accounted = history.consumed + history.remaining;
@@ -190,27 +201,52 @@ export async function settleLine(
 			} as const;
 		if (quantity === 0)
 			return { kind: "released", quantity: released } as const;
-		const parts =
-			sameProduct && latest ? latest.parts : await input.freshParts(tx);
-		if (!parts || parts.length === 0)
-			throw new CommitmentError(
-				`Product ${input.productId} has no parts to reserve`,
-			);
-		const [made] = await tx
-			.insert(stockCommitments)
-			.values({
-				orderLineId: input.orderLineId,
-				orderId: input.orderId,
-				revision: (latest?.revision ?? 0) + 1,
-				productId: input.productId,
-				quantity,
-				source: input.legacySaleBatchId ? "activation" : "order",
-				legacySaleBatchId: input.legacySaleBatchId ?? null,
-			})
-			.returning({ id: stockCommitments.id });
-		await tx
-			.insert(stockCommitmentParts)
-			.values(parts.map((p) => ({ ...p, commitmentId: made.id })));
+		// Activation reserves exactly what its sale took.
+		const boxes =
+			wholeId === null || input.legacySaleBatchId
+				? 0
+				: Math.min(quantity, await freeUnits(tx, wholeId));
+		const holds: { quantity: number; parts: Part[] }[] = [];
+		if (wholeId !== null && boxes > 0)
+			holds.push({
+				quantity: boxes,
+				parts: [{ productId: wholeId, perUnit: 1 }],
+			});
+		if (quantity > boxes) {
+			// The parts this product last reserved, unless those were its whole
+			// sets.
+			const before = sameProduct
+				? lastOf(history.revisions, input.productId).find(
+						(r) => !r.parts.some((p) => p.productId === wholeId),
+					)
+				: undefined;
+			const parts = before ? before.parts : await input.freshParts(tx);
+			if (!parts || parts.length === 0)
+				throw new CommitmentError(
+					`Product ${input.productId} has no parts to reserve`,
+				);
+			holds.push({ quantity: quantity - boxes, parts });
+		}
+		let made = { id: 0 };
+		let revision = latest?.revision ?? 0;
+		for (const hold of holds) {
+			revision += 1;
+			[made] = await tx
+				.insert(stockCommitments)
+				.values({
+					orderLineId: input.orderLineId,
+					orderId: input.orderId,
+					revision,
+					productId: input.productId,
+					quantity: hold.quantity,
+					source: input.legacySaleBatchId ? "activation" : "order",
+					legacySaleBatchId: input.legacySaleBatchId ?? null,
+				})
+				.returning({ id: stockCommitments.id });
+			await tx
+				.insert(stockCommitmentParts)
+				.values(hold.parts.map((p) => ({ ...p, commitmentId: made.id })));
+		}
 		return latest
 			? ({
 					kind: "revised",
@@ -220,6 +256,32 @@ export async function settleLine(
 				} as const)
 			: ({ kind: "reserved", commitmentId: made.id, quantity } as const);
 	});
+}
+
+// The line's newest revisions for this product, newest first, back to where
+// it was last another product.
+function lastOf(revisions: Revision[], productId: number) {
+	const newest = [...revisions].reverse();
+	const other = newest.findIndex((r) => r.productId !== productId);
+	return other < 0 ? newest : newest.slice(0, other);
+}
+
+// How many of a product an order can still reserve: what the shipping
+// shelves hold (shipsFrom) less what's promised. Locks its shelf rows; the
+// caller holds the product locked.
+async function freeUnits(db: Db, productId: number) {
+	const shelves = await shipsFrom(db);
+	if ("problem" in shelves) return 0;
+	const holds = await lockedHolds(db, [productId], shelves);
+	const at = (locationId: number) =>
+		holds.get(`${productId}:${locationId}`) ?? 0;
+	const physical =
+		Math.max(0, at(shelves.main)) +
+		(shelves.overflow
+			? Math.max(0, at(shelves.overflow.locationId) - shelves.overflow.keep)
+			: 0);
+	const promised = (await committedUnits(db, [productId])).get(productId) ?? 0;
+	return Math.max(0, physical - promised);
 }
 
 export async function committedUnits(

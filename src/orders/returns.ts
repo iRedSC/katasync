@@ -144,7 +144,11 @@ export async function receiveReturn(
 			await lockBatchProducts(
 				tx,
 				[...sales.values()].flatMap((sale) =>
-					sale === null ? [] : [sale.batchId],
+					sale === null
+						? []
+						: "batchIds" in sale
+							? sale.batchIds
+							: [sale.batchId],
 				),
 				[
 					...lines.flatMap((line) =>

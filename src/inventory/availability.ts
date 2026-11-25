@@ -4,9 +4,11 @@ import type { Db } from "#/db/client";
 import { committedStock } from "#/db/quantity-schema";
 import { productComponents, products, stockLevels } from "#/db/schema";
 import type { OnlineStock } from "./online-stock";
+import { wholeSetsOf } from "./whole-sets";
 
 // Sellable units per SKU across the given locations. Simple SKUs and kits use
-// their own stock. A bundle is limited by its scarcest component. Negative
+// their own stock. A bundle is limited by its scarcest component, and sells
+// its whole sets (src/inventory/whole-sets.ts) on top of that. Negative
 // stock counts as zero, and the `keep` shelf (the retail store) gives only
 // what it holds above what it keeps, as a shipped order takes it. Pass `uncounted` to have a product that isn't counted
 // yet (src/inventory/not-counted.ts) sell that many whatever its number, and
@@ -85,6 +87,18 @@ export async function getAvailability(
 			previous === undefined ? available : Math.min(previous, available),
 		);
 	}
+	// Whole sets are counted boxes, so they add what they hold and no more. A
+	// set already selling without limit stays at that.
+	const whole = await wholeSetsOf(
+		db,
+		rows.filter((row) => row.kind === "bundle").map((row) => row.id),
+	);
+	const boxes = await getAvailability(db, [...whole.values()], from);
+	for (const [setId, kitId] of whole) {
+		const loose = result.get(setId) ?? 0;
+		if (options.uncounted === undefined || loose < options.uncounted)
+			result.set(setId, loose + (boxes.get(kitId) ?? 0));
+	}
 	return result;
 }
 
@@ -131,8 +145,19 @@ export async function getBundleBlockers(
 		{ uncounted: Number.POSITIVE_INFINITY },
 	);
 
+	// A set with whole sets to sell isn't blocked, whatever its parts hold.
+	const whole = await wholeSetsOf(db, [
+		...new Set(recipes.map((r) => r.bundleId)),
+	]);
+	const boxes = await getAvailability(db, [...whole.values()], from);
+	const boxed = (setId: number) => {
+		const kitId = whole.get(setId);
+		return kitId !== undefined && (boxes.get(kitId) ?? 0) > 0;
+	};
+
 	const blocks = new Map<number, number[]>();
 	for (const r of recipes) {
+		if (boxed(r.bundleId)) continue;
 		if ((available.get(r.componentId) ?? 0) < r.quantity) {
 			blocks.set(r.componentId, [
 				...(blocks.get(r.componentId) ?? []),

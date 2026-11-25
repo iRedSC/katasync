@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import {
 	catalogs,
@@ -71,7 +71,9 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				),
 			)
 			.leftJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
-			.where(carriedOrStocked)
+			// A tool set's boxed sets show on the set's page, not as a product
+			// of their own (src/inventory/whole-sets.ts).
+			.where(and(carriedOrStocked, isNull(products.wholeSetOfId)))
 			.orderBy(products.name, products.variantName);
 		const ranked = abcClasses(db);
 		const plan = loadPlan(db, new Date(), ranked);

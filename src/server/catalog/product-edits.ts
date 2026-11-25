@@ -6,6 +6,7 @@ import { locations } from "#/db/schema";
 import { assembleKits, disassembleKits, LedgerError } from "#/inventory/ledger";
 import { isOurs } from "#/inventory/locations";
 import { setRecipe } from "#/inventory/recipes";
+import { createWholeSet } from "#/inventory/whole-sets";
 import { deleteProduct } from "#/products/archive";
 import { ProductError, updateProductDetails } from "#/products/details";
 import { pushProductsNow } from "#/stock-push/on-change";
@@ -62,6 +63,16 @@ export const setProductParts = createServerFn({ method: "POST" })
 		const db = getDb();
 		await setRecipe(db, data.productId, data.parts);
 		await pushProductsNow(db, [data.productId]);
+	});
+
+// Gives a tool set its whole sets: the set as it comes boxed, sold before
+// its loose parts (src/inventory/whole-sets.ts). Returns their SKU, the
+// one it already has when it has one.
+export const addWholeSet = createServerFn({ method: "POST" })
+	.validator(type({ productId: "number.integer > 0" }))
+	.handler(async ({ data }) => {
+		const { sku } = await createWholeSet(getDb(), data.productId);
+		return { sku };
 	});
 
 // Builds kits from their parts on one of our shelves, or takes them apart.

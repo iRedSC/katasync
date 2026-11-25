@@ -202,7 +202,8 @@ async function loadCatalog(db: Db) {
 				kind: products.kind,
 			})
 			.from(products)
-			.where(carried),
+			// A tool set's boxed sets sell through the set's own listings.
+			.where(and(carried, isNull(products.wholeSetOfId))),
 		db.select().from(productAliases),
 		// Every supplier's part number for it, since a listing may use any.
 		db

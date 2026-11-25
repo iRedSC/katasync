@@ -1,5 +1,5 @@
-import { Link } from "@tanstack/react-router";
-import { X } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { Package, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { Badge, Card } from "#/components/page";
 import { ProductName } from "#/components/product";
@@ -11,7 +11,7 @@ import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import type { ProductDetail } from "#/server/catalog";
-import { setProductParts } from "#/server/catalog/product-edits";
+import { addWholeSet, setProductParts } from "#/server/catalog/product-edits";
 import { KitDialog, type KitDirection } from "./kit-dialog";
 import { type IndexedProduct, ProductSearch } from "./product-search";
 
@@ -33,6 +33,7 @@ function refusal(
 	if (p.id === parent.id) return "This product";
 	if (parts.some((c) => c.id === p.id)) return "Already a part";
 	if (p.kind === "bundle") return "Tool sets can't be parts";
+	if (p.wholeSet) return "Whole sets can't be parts";
 	if (p.kind === "kit" && parent.kind === "kit") return "Kits can't hold kits";
 	return null;
 }
@@ -127,28 +128,33 @@ export function PartsCard({
 	}
 
 	const kit = p.kind === "kit" && parts.length > 0;
+	// A tool set's whole sets hold the set's parts, so those are changed on
+	// the set.
+	const follows = d.wholeOf !== null;
 	return (
 		<Card
 			title={p.kind === "bundle" ? "Parts in this set" : "Built from"}
 			aside={
-				kit && (
-					<span className="flex gap-4">
-						<button
-							type="button"
-							onClick={() => setConverting("disassemble")}
-							className="text-link hover:underline"
-						>
-							Take apart
-						</button>
-						<button
-							type="button"
-							onClick={() => setConverting("assemble")}
-							className="text-link hover:underline"
-						>
-							Assemble
-						</button>
-					</span>
-				)
+				p.kind === "bundle"
+					? parts.length > 0 && <WholeSets d={d} />
+					: kit && (
+							<span className="flex gap-4">
+								<button
+									type="button"
+									onClick={() => setConverting("disassemble")}
+									className="text-link hover:underline"
+								>
+									Take apart
+								</button>
+								<button
+									type="button"
+									onClick={() => setConverting("assemble")}
+									className="text-link hover:underline"
+								>
+									Assemble
+								</button>
+							</span>
+						)
 			}
 			flush
 		>
@@ -187,7 +193,7 @@ export function PartsCard({
 										<QuantityInput
 											sku={c.sku}
 											value={c.quantity}
-											disabled={adding}
+											disabled={adding || follows}
 											onSave={(quantity) =>
 												save(
 													parts.map((x) =>
@@ -216,17 +222,19 @@ export function PartsCard({
 										)}
 									</td>
 									<td className="pr-2">
-										<RemoveButton
-											last={parts.length === 1}
-											pending={adding}
-											sku={c.sku}
-											onRemove={() =>
-												save(
-													parts.filter((x) => x.id !== c.id),
-													`Took ${c.sku} out`,
-												)
-											}
-										/>
+										{!follows && (
+											<RemoveButton
+												last={parts.length === 1}
+												pending={adding}
+												sku={c.sku}
+												onRemove={() =>
+													save(
+														parts.filter((x) => x.id !== c.id),
+														`Took ${c.sku} out`,
+													)
+												}
+											/>
+										)}
 									</td>
 								</tr>
 							);
@@ -234,13 +242,23 @@ export function PartsCard({
 					</tbody>
 				</table>
 			)}
-			<ProductSearch
-				placeholder="Add a part: SKU or name"
-				busy={adding}
-				refuse={(x) => refusal(p, parts, x)}
-				onPick={add}
-				className={cn(parts.length > 0 && "border-t")}
-			/>
+			{d.wholeOf !== null ? (
+				<Link
+					to="/products/$sku"
+					params={{ sku: d.wholeOf }}
+					className="block border-t px-4 py-2.5 text-muted-foreground hover:underline"
+				>
+					Parts follow {d.wholeOf}
+				</Link>
+			) : (
+				<ProductSearch
+					placeholder="Add a part: SKU or name"
+					busy={adding}
+					refuse={(x) => refusal(p, parts, x)}
+					onPick={add}
+					className={cn(parts.length > 0 && "border-t")}
+				/>
+			)}
 			{kit && (
 				<KitDialog
 					direction={converting}
@@ -250,6 +268,45 @@ export function PartsCard({
 				/>
 			)}
 		</Card>
+	);
+}
+
+// A tool set's whole sets: the set as it comes boxed, which orders take
+// before its loose parts. Shows how many can be sold and leads to them,
+// where they're counted, built from parts, or taken apart. A set without
+// any gets them here.
+function WholeSets({ d }: { d: ProductDetail }) {
+	const navigate = useNavigate();
+	const [adding, setAdding] = useState(false);
+	if (d.whole)
+		return (
+			<Link
+				to="/products/$sku"
+				params={{ sku: d.whole.sku }}
+				className="flex items-center gap-1.5 text-link hover:underline"
+			>
+				<Package className="size-3.5" />
+				<span className="tabular-nums">{formatCount(d.whole.available)}</span>
+				whole
+			</Link>
+		);
+	return (
+		<button
+			type="button"
+			disabled={adding}
+			onClick={async () => {
+				setAdding(true);
+				const r = await optimism.change({
+					send: () => addWholeSet({ data: { productId: d.product.id } }),
+				});
+				setAdding(false);
+				if (r) navigate({ to: "/products/$sku", params: { sku: r.value.sku } });
+			}}
+			className="flex items-center gap-1.5 text-link hover:underline disabled:opacity-60"
+		>
+			<Package className="size-3.5" />
+			Add whole sets
+		</button>
 	);
 }
 

@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
+import { sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { locations, products, stores } from "#/db/schema";
 import { setPosLocation } from "#/inventory/locations";
@@ -17,6 +18,9 @@ export const listProductIndex = createServerFn({ method: "GET" }).handler(
 				variantName: products.variantName,
 				imageUrl: products.imageUrl,
 				part: isPart,
+				// A tool set's boxed sets (src/inventory/whole-sets.ts): found by
+				// search, never offered as a match or a part.
+				wholeSet: sql<boolean>`${products.wholeSetOfId} is not null`,
 			})
 			.from(products)
 			.where(carried)

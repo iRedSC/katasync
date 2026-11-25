@@ -3,6 +3,7 @@ import type { Db } from "#/db/client";
 import { movements, productComponents } from "#/db/schema";
 import { LedgerError } from "./ledger";
 import { lockRecipe } from "./ledger/post";
+import { lockedWholeSet, refitWholeSet, wholeSetOf } from "./whole-sets";
 
 // What each kind may contain. Kits hold only simple SKUs; bundles may also hold
 // kits. Nothing holds a bundle, so recipes are at most two levels deep and
@@ -19,15 +20,22 @@ export async function setRecipe(
 	components: { productId: number; quantity: number }[],
 ) {
 	return db.transaction(async (tx) => {
+		const whole = await wholeSetOf(tx, parentProductId);
 		const {
 			parent,
 			recipe,
 			products: rows,
-		} = await lockRecipe(
-			tx,
-			parentProductId,
-			components.map((component) => component.productId),
-		);
+		} = await lockRecipe(tx, parentProductId, [
+			...components.map((component) => component.productId),
+			...(whole === null ? [] : [whole]),
+		]);
+		await lockedWholeSet(tx, parentProductId, whole);
+		if (parent.wholeSetOfId !== null) {
+			const set = rows.find((r) => r.id === parent.wholeSetOfId);
+			throw new LedgerError(
+				`${parent.sku} is a whole set; change the parts of ${set?.sku ?? "its tool set"} instead`,
+			);
+		}
 		if (parent.kind === "simple") {
 			throw new LedgerError(
 				`${parent.sku} is a simple SKU and can't have components`,
@@ -46,6 +54,10 @@ export async function setRecipe(
 			if (child.archivedAt)
 				throw new LedgerError(
 					`${child.sku} is archived; restore it to use it as a part`,
+				);
+			if (child.wholeSetOfId !== null)
+				throw new LedgerError(
+					`${child.sku} is a tool set's whole sets and can't be a part`,
 				);
 			if (!allowed.includes(child.kind)) {
 				throw new LedgerError(
@@ -72,6 +84,19 @@ export async function setRecipe(
 					`${parent.sku} has inventory history; create a new SKU for different parts`,
 				);
 		}
+
+		if (
+			parent.kind === "bundle" &&
+			whole !== null &&
+			!sameParts(recipe, components)
+		)
+			await refitWholeSet(
+				tx,
+				parent,
+				whole,
+				components,
+				new Map(rows.map((r) => [r.id, r.kind])),
+			);
 
 		await tx
 			.delete(productComponents)

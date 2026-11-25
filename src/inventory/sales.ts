@@ -3,6 +3,7 @@ import {
 	eq,
 	exists,
 	gte,
+	isNotNull,
 	isNull,
 	not,
 	or,
@@ -155,8 +156,10 @@ function soldUnits(
 		.innerJoin(orders, eq(orders.id, stockCommitments.orderId))
 		.where(counted);
 	// A product that became a tool set after it sold has recorded sales
-	// naming itself; a unit of it means its parts now. Other rows already
-	// name stocked products, which are never tool sets, so pass as they are.
+	// naming itself; a unit of it means its parts now. A whole set
+	// (src/inventory/whole-sets.ts) that sold is its tool set sold, so it
+	// counts as that set's parts too. Other rows already name stocked
+	// products, so pass as they are.
 	const sold = unionAll(recorded, byRecipe, committed).as("sold_rows");
 	const part = alias(productComponents, "part");
 	const kind = alias(products, "sold_kind");
@@ -176,7 +179,13 @@ function soldUnits(
 		.innerJoin(kind, eq(kind.id, sold.productId))
 		.leftJoin(
 			part,
-			and(eq(part.parentProductId, sold.productId), eq(kind.kind, "bundle")),
+			and(
+				eq(
+					part.parentProductId,
+					sql`coalesce(${kind.wholeSetOfId}, ${sold.productId})`,
+				),
+				or(eq(kind.kind, "bundle"), isNotNull(kind.wholeSetOfId)),
+			),
 		)
 		.as("sold");
 }

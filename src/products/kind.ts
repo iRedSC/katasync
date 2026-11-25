@@ -15,6 +15,7 @@ import {
 } from "#/db/schema";
 import { lockRecipes } from "#/inventory/ledger/post";
 import { hasStockHistory, setRecipe } from "#/inventory/recipes";
+import { wholeOnHand } from "#/inventory/whole-sets";
 import { ProductError } from "./details";
 
 // Changing what kind of product a SKU is: a simple product found to be a
@@ -72,6 +73,10 @@ export async function setProductKind(
 				product.kind,
 				change.kind,
 			);
+			if (product.wholeSetOfId !== null)
+				blockers.unshift(
+					"it's a tool set's whole sets, which are always a kit",
+				);
 			if (blockers.length > 0)
 				throw new ProductError(
 					`Can't make ${product.sku} a ${name[change.kind]}: ${blockers.join("; ")}`,
@@ -100,6 +105,11 @@ async function blockersFor(
 	kind: KindChange["kind"],
 ): Promise<string[]> {
 	const blockers: string[] = [];
+	const boxes = from === "bundle" ? await wholeOnHand(tx, id) : 0;
+	if (boxes !== 0)
+		blockers.push(
+			`${boxes} whole sets on hand only sell as this tool set; sell them or take them apart first`,
+		);
 	if (from === "kit" && (await hasStockHistory(tx, id)))
 		blockers.push(
 			"its stock history was built from its parts; make a new SKU instead",
