@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, ne } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, ne } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	stockCommitmentEntries,
@@ -71,20 +71,33 @@ export async function movedSince(db: Db, since: Date): Promise<number[]> {
 	]);
 }
 
-// The products, and every set containing one.
+// The products, and every set containing one or sold from one as its whole
+// sets (src/inventory/whole-sets.ts).
 async function withSets(db: Db, ids: number[]): Promise<number[]> {
 	if (ids.length === 0) return [];
-	const sets = await db
-		.selectDistinct({ id: productComponents.parentProductId })
-		.from(productComponents)
-		.innerJoin(products, eq(products.id, productComponents.parentProductId))
-		.where(
-			and(
-				inArray(productComponents.componentProductId, ids),
-				eq(products.kind, "bundle"),
+	const [sets, boxed] = await Promise.all([
+		db
+			.selectDistinct({ id: productComponents.parentProductId })
+			.from(productComponents)
+			.innerJoin(products, eq(products.id, productComponents.parentProductId))
+			.where(
+				and(
+					inArray(productComponents.componentProductId, ids),
+					eq(products.kind, "bundle"),
+				),
 			),
-		);
-	return [...new Set([...ids, ...sets.map((s) => s.id)])];
+		db
+			.select({ id: products.wholeSetOfId })
+			.from(products)
+			.where(and(inArray(products.id, ids), isNotNull(products.wholeSetOfId))),
+	]);
+	return [
+		...new Set([
+			...ids,
+			...sets.map((s) => s.id),
+			...boxed.flatMap((b) => (b.id === null ? [] : [b.id])),
+		]),
+	];
 }
 
 // Pushes what moved since `since` to every store with push on, leaving out

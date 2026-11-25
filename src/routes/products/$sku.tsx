@@ -209,7 +209,9 @@ function ProductPage() {
 				<span className="flex items-center gap-2">
 					<span className="truncate">{p.name}</span>
 					{p.kind === "bundle" && <Badge tone="info">Tool set</Badge>}
-					{p.kind === "kit" && <Badge tone="info">Kit</Badge>}
+					{p.kind === "kit" && (
+						<Badge tone="info">{d.wholeOf ? "Whole set" : "Kit"}</Badge>
+					)}
 					{p.archivedAt && <ArchivedBadge />}
 				</span>
 			}
@@ -347,6 +349,12 @@ function ProductPage() {
 						<p className="text-muted-foreground">
 							{p.kind === "bundle" ? "sets can be sold" : "can be sold"}
 						</p>
+						{d.whole && d.whole.available > 0 && (
+							<p className="mt-1 text-xs text-muted-foreground tabular-nums">
+								{formatCount(d.whole.available)} whole first, then{" "}
+								{formatCount(d.available - d.whole.available)} from parts
+							</p>
+						)}
 					</Card>
 
 					<DetailsCard d={d} />
@@ -464,6 +472,15 @@ function getVerdict(
 				"Sells without limit on every channel until its first count. Sales still come off its number.",
 		};
 	if (d.product.kind === "bundle") {
+		// Whole sets sell whatever the parts hold.
+		if (d.whole && d.whole.available > 0)
+			return d.available > 3
+				? null
+				: {
+						tone: "warning",
+						label: `Only ${formatCount(d.available)} left`,
+						detail: `${formatCount(d.whole.available)} whole, ${formatCount(d.available - d.whole.available)} from parts.`,
+					};
 		// A part that isn't counted yet sells without limit, so it's never short.
 		const missing = d.components.filter(
 			(c) => !c.notCounted && c.available < c.quantity,

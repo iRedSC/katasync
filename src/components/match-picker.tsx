@@ -149,7 +149,10 @@ export function MatchPicker({
 	const q = query.trim();
 	const results =
 		q.length >= 2 && index.status === "ready"
-			? search(index.products, q)
+			? search(
+					index.products.filter((p) => !p.wholeSet),
+					q,
+				)
 			: null;
 	const rows = results?.map((p) => ({ ...p, reason: null })) ?? item.candidates;
 	// The highlighted row: the best guess until arrows move it.

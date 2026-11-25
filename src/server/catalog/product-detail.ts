@@ -20,6 +20,7 @@ import { abcClasses } from "#/inventory/abc";
 import { getAvailability } from "#/inventory/availability";
 import { isOurs } from "#/inventory/locations";
 import { onlineStock } from "#/inventory/online-stock";
+import { wholeSetOf } from "#/inventory/whole-sets";
 import { productHistory } from "#/products/archive";
 import { membershipOf } from "#/purchasing/reorder";
 
@@ -186,8 +187,24 @@ export const getProductDetail = createServerFn({ method: "GET" })
 		// The product and its parts in one availability lookup.
 		const online = await onlineStock(db);
 		const partIds = components.map((c) => c.id);
+		// A tool set's whole sets, or the tool set this is the whole sets of
+		// (src/inventory/whole-sets.ts).
+		const tiedId =
+			product.wholeSetOfId ??
+			(product.kind === "bundle" ? await wholeSetOf(db, product.id) : null);
+		const [tied] =
+			tiedId === null
+				? []
+				: await db
+						.select({ id: products.id, sku: products.sku })
+						.from(products)
+						.where(eq(products.id, tiedId));
 		const [availability, abc, sets, partShelves, pastUse] = await Promise.all([
-			getAvailability(db, [product.id, ...partIds], online),
+			getAvailability(
+				db,
+				[product.id, ...partIds, ...(tied ? [tied.id] : [])],
+				online,
+			),
 			abcClasses(db),
 			membershipOf(db, product.id),
 			// Each part on each of our shelves, so assembling a kit offers only
@@ -229,6 +246,14 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			history,
 			costHistory: await costHistory,
 			available: availability.get(product.id) ?? 0,
+			// On a tool set: its whole sets and how many of those can be sold,
+			// already part of `available`.
+			whole:
+				tied && product.kind === "bundle"
+					? { sku: tied.sku, available: availability.get(tied.id) ?? 0 }
+					: null,
+			// On a tool set's whole sets: the tool set.
+			wholeOf: tied && product.wholeSetOfId !== null ? tied.sku : null,
 			abc: rank ? { ...rank, of: ranking.size, days: abc.days } : null,
 			// Where a count or transfer could be recorded. One location means
 			// nobody has to pick.

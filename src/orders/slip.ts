@@ -16,6 +16,8 @@ import { toPrint } from "./remaining";
 // the money as the order has it now.
 
 export type SlipItem = {
+	// The order line it is, as the channel names it.
+	lineExternalId: string;
 	productId: number | null;
 	sku: string | null;
 	// The channel's title, which keys contents when there's no SKU.
@@ -257,6 +259,7 @@ function unboxed(lines: Current[], order: { needsPacking: boolean }) {
 }
 
 const pick = (l: Omit<Frozen, "quantity">) => ({
+	lineExternalId: l.externalId,
 	productId: l.productId,
 	sku: l.sku,
 	title: l.title,

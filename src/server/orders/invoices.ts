@@ -10,6 +10,7 @@ import {
 	products,
 	stores,
 } from "#/db/schema";
+import { wholeToPack } from "#/inventory/whole-sets";
 import { cityLine } from "#/lib/format";
 import { groupBy } from "#/lib/group-by";
 import { sharingOrders } from "#/orders/invoice-index";
@@ -123,6 +124,12 @@ export const listInvoices = createServerFn({ method: "GET" })
 					.where(inArray(productComponents.parentProductId, setIds))
 					.orderBy(asc(products.sku))
 			: [];
+		// Tool sets the order took whole (src/inventory/whole-sets.ts): picked
+		// as the box, not as parts.
+		const whole = await wholeToPack(
+			db,
+			toShip.map((o) => o.id),
+		);
 		const partsBy = groupBy(parts, (p) => p.setId);
 		const partsOf = (productId: number | null) =>
 			productId === null ? [] : (partsBy.get(productId) ?? []);
@@ -176,9 +183,21 @@ export const listInvoices = createServerFn({ method: "GET" })
 				const packed = packing(o);
 				const key = keys.get(o.id);
 				const last = key === undefined ? undefined : lastPacked.get(key);
+				// Each line picks the boxes it holds itself, never another
+				// line's.
+				const wholeOf = (l: (typeof own)[number]) => {
+					const held = whole.get(`${o.id}:${l.lineExternalId}`);
+					if (!held || typeof l.toPack !== "number") return null;
+					const units = Math.min(l.toPack, held.units);
+					return units > 0 ? { sku: held.sku, units } : null;
+				};
 				return {
 					...o,
-					lines: own.map((l) => ({ ...l, parts: partsOf(l.productId) })),
+					lines: own.map((l) => ({
+						...l,
+						parts: partsOf(l.productId),
+						whole: wholeOf(l),
+					})),
 					subtotal,
 					shipsWith: sharing.get(o.id) ?? [],
 					// What quick ship will suggest: the box and weight these exact

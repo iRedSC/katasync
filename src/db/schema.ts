@@ -165,10 +165,28 @@ export const products = pgTable(
 		// About this one unit, for a refurb: on its Shopify page (metafield
 		// custom.details) and its box label.
 		notes: text(),
+		// On a kit: the tool set this is, still boxed as it came in. Orders
+		// for the set take these before its loose parts, and it stays closed
+		// until someone takes it apart (src/inventory/whole-sets.ts). A set
+		// has at most one.
+		wholeSetOfId: integer().references((): AnyPgColumn => products.id, {
+			onDelete: "set null",
+		}),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index("products_group_idx").on(t.groupId),
+		uniqueIndex("products_whole_set_of_idx").on(t.wholeSetOfId),
+		check(
+			"products_whole_set_is_kit",
+			sql`${t.wholeSetOfId} is null or ${t.kind} = 'kit'`,
+		),
+		// Boxes are counted as they're put away, so they never sell without
+		// limit.
+		check(
+			"products_whole_set_is_counted",
+			sql`${t.wholeSetOfId} is null or ${t.notCountedSince} is null`,
+		),
 		index("products_catalog_idx").on(t.catalogId),
 		check(
 			"products_refurb_has_condition",

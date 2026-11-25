@@ -316,33 +316,47 @@ function Invoice({
 										)}
 									</div>
 								</div>
-								{l.toPack !== null && l.parts.length > 0 && (
-									<ul className="mt-2 ml-[calc(0.6in+0.75rem)] flex flex-col gap-1.5 border-l-2 border-border pl-3">
-										{l.parts.map((p) => (
-											<li
-												key={p.sku}
-												className="flex break-inside-avoid items-center gap-2"
-											>
-												<Photo src={p.imageUrl} className="size-[0.35in]" />
-												<span className="w-8 font-bold tabular-nums">
-													{typeof l.toPack === "number"
-														? p.perSet * l.toPack
-														: "?"}
-												</span>
-												<span className="min-w-0">
-													<span>
-														{p.variantName
-															? `${p.name}, ${p.variantName}`
-															: p.name}
-													</span>
-													<span className="ml-2 text-[9pt] text-muted-foreground">
-														{p.sku}
-													</span>
-												</span>
-											</li>
-										))}
-									</ul>
+								{/* Taken whole: pick the box, and parts only for the rest. */}
+								{l.whole && (
+									<p className="mt-2 ml-[calc(0.6in+0.75rem)] flex items-center gap-2 border-l-2 border-foreground pl-3 font-bold">
+										<span className="w-8 tabular-nums">{l.whole.units}</span>
+										<span>
+											Whole set
+											<span className="ml-2 text-[9pt] font-normal text-muted-foreground">
+												{l.whole.sku}
+											</span>
+										</span>
+									</p>
 								)}
+								{l.toPack !== null &&
+									l.parts.length > 0 &&
+									l.toPack !== l.whole?.units && (
+										<ul className="mt-2 ml-[calc(0.6in+0.75rem)] flex flex-col gap-1.5 border-l-2 border-border pl-3">
+											{l.parts.map((p) => (
+												<li
+													key={p.sku}
+													className="flex break-inside-avoid items-center gap-2"
+												>
+													<Photo src={p.imageUrl} className="size-[0.35in]" />
+													<span className="w-8 font-bold tabular-nums">
+														{typeof l.toPack === "number"
+															? p.perSet * (l.toPack - (l.whole?.units ?? 0))
+															: "?"}
+													</span>
+													<span className="min-w-0">
+														<span>
+															{p.variantName
+																? `${p.name}, ${p.variantName}`
+																: p.name}
+														</span>
+														<span className="ml-2 text-[9pt] text-muted-foreground">
+															{p.sku}
+														</span>
+													</span>
+												</li>
+											))}
+										</ul>
+									)}
 							</td>
 							{!slip && (
 								<>

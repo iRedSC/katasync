@@ -26,6 +26,7 @@ import {
 	readQuantityMode,
 } from "#/inventory/commitments";
 import { isOurs } from "#/inventory/locations";
+import { wholeOnHand } from "#/inventory/whole-sets";
 import { ProductError } from "./details";
 
 // Retiring products. One with history is archived: it leaves lists, pickers,
@@ -91,6 +92,11 @@ async function stillActive(tx: Db, id: number, mode: QuantityMode) {
 	if (shelves.length > 0)
 		blockers.push(
 			`${shelves.map((s) => `${s.onHand} on hand at ${s.name}`).join(", ")}; sell, adjust, or count it to 0 first`,
+		);
+	const boxes = await wholeOnHand(tx, id);
+	if (boxes !== 0)
+		blockers.push(
+			`${boxes} whole sets on hand only sell as this tool set; sell them or take them apart first`,
 		);
 	const promised =
 		mode === "committed" ? ((await committedUnits(tx, [id])).get(id) ?? 0) : 0;
