@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Db } from "#/db/client";
 import { assembleKits, disassembleKits } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
+import { createWholeSet } from "#/inventory/whole-sets";
 import {
 	archiveProduct,
 	deleteProduct,
@@ -178,6 +179,21 @@ export function registerProductTools(server: McpServer, db: Db) {
 			annotations: { ...WRITE, destructiveHint: true },
 		},
 		async ({ sku }) => json(await deleteProduct(db, sku)),
+	);
+
+	server.registerTool(
+		"add_whole_sets",
+		{
+			description:
+				"Gives a tool set (bundle) its whole sets: the set still boxed as one item, stocked apart from its loose parts. Makes a kit tied to the set (products.whole_set_of_id), built from the set's parts, and returns its SKU; a set that has one gets that SKU back and nothing changes. The set stays a bundle on the same listings. It starts with none on hand: put the boxes on the shelf with record_count on the returned SKU, or, when their parts were already received as parts, assemble_kits on it, which takes them out of the parts' stock. From then on the set can sell its boxes plus the sets its loose parts make, every order takes boxes first and parts for the rest, and boxes never count as stock of the parts. disassemble_kits opens boxes back into parts. The set's parts can't change while a box is on a shelf or promised to an order.",
+			inputSchema: { sku: z.string().describe("The tool set") },
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku }) => {
+			const set = await productBySku(db, sku);
+			const whole = await createWholeSet(db, set.id);
+			return json({ tool_set: set.sku, whole_sets_sku: whole.sku });
+		},
 	);
 
 	for (const [name, direction] of [

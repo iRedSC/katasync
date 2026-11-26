@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { getAvailability } from "#/inventory/availability";
+import { recordSale } from "#/inventory/ledger";
 import { createProduct } from "#/test/db";
 import { callTool, freshDb } from "./mcp.fixtures";
 
@@ -161,5 +163,61 @@ describe("set_product_kind", () => {
 		expect(refused.isError).toBe(true);
 		expect(refused.data).toMatch(/FBA listings sell it/);
 		expect(await state("SET")).toEqual({ kind: "simple", parts: 0 });
+	});
+});
+
+describe("add_whole_sets", () => {
+	test("a tool set stocks boxed sets apart from its parts and sells them first", async () => {
+		await createProduct(db, "DM-SETB2", "simple");
+		await tool("set_product_kind", {
+			sku: "DM-SETB2",
+			kind: "bundle",
+			components: parts,
+		});
+		const made = await tool("add_whole_sets", { sku: "DM-SETB2" });
+		expect(made.data).toEqual({
+			tool_set: "DM-SETB2",
+			whole_sets_sku: "DM-SETB2-WHOLE",
+		});
+		// Asked again, it's the same one.
+		expect((await tool("add_whole_sets", { sku: "DM-SETB2" })).data).toEqual(
+			made.data,
+		);
+		expect(await state("DM-SETB2")).toEqual({ kind: "bundle", parts: 2 });
+
+		await tool("record_count", { sku: "DM-SETB2-WHOLE", counted: 3 });
+		await tool("record_count", { sku: "BLADE", counted: 5 });
+		await tool("record_count", { sku: "HANDLE", counted: 4 });
+		const id = async (sku: string) =>
+			(
+				await db
+					.select({ id: schema.products.id })
+					.from(schema.products)
+					.where(eq(schema.products.sku, sku))
+			)[0].id;
+		const [warehouse] = await db.select().from(schema.locations);
+		const from = { locationIds: [warehouse.id], keep: null };
+		const sellable = async (sku: string) =>
+			(await getAvailability(db, [await id(sku)], from)).get(await id(sku));
+		// Three boxes, and loose parts for two more.
+		expect(await sellable("DM-SETB2")).toBe(5);
+		expect(await sellable("HANDLE")).toBe(4);
+
+		// Four sell: the three boxes, then one from parts.
+		await recordSale(db, {
+			productId: await id("DM-SETB2"),
+			quantity: 4,
+			locationId: warehouse.id,
+			reference: "order",
+		});
+		expect(await sellable("DM-SETB2-WHOLE")).toBe(0);
+		expect(await sellable("BLADE")).toBe(4);
+		expect(await sellable("HANDLE")).toBe(2);
+		expect(await sellable("DM-SETB2")).toBe(1);
+	});
+
+	test("refuses a product that isn't a tool set", async () => {
+		const refused = await tool("add_whole_sets", { sku: "BLADE" });
+		expect(refused.isError).toBe(true);
 	});
 });
