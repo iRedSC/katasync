@@ -152,13 +152,14 @@ export const quickShipRates = createServerFn({ method: "POST" })
 			// TikTok quotes one order at a time; a combined box is priced on the
 			// pin's order at the whole box's size, as buying does. A grown box
 			// that fails to price only leaves the surcharge warning off.
+			// The grown box is priced first, never alongside: the real box must
+			// be the order's last quote, since buying quotes it again and a
+			// lingering grown price there refuses the buy as a price rise.
 			const orderId = tiktokOrderId(first.marketplaceOrderId);
-			const [priced, bigger] = await Promise.all([
-				tiktokRates(orderId, data.boxes[0]),
-				tiktokRates(orderId, grown(data.boxes[0])).catch(() => null),
-			]);
-			perBox = [priced];
-			grownRates = bigger;
+			grownRates = await tiktokRates(orderId, grown(data.boxes[0])).catch(
+				() => null,
+			);
+			perBox = [await tiktokRates(orderId, data.boxes[0])];
 		} else {
 			const where = await shipAddresses(db, data.orderIds[0]);
 			const members = await db
