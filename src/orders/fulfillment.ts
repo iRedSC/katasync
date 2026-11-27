@@ -45,10 +45,14 @@ export function labelSource(order: {
 }
 
 // The page to fulfill an order on, and why, or null when katasync fulfills
-// it itself.
-export function externalFulfillment(
-	order: OrderRef,
-): { name: string; url: string; why: string | null } | null {
+// it itself. formUrl: the marketplace's own label form, when quick ship can
+// hand it a packed box (src/components/quick-ship/amazon-form.ts).
+export function externalFulfillment(order: OrderRef): {
+	name: string;
+	url: string;
+	why: string | null;
+	formUrl: string | null;
+} | null {
 	const source = labelSource(order);
 	if (source === "amazon") {
 		const [, id] = order.marketplaceOrderId?.split(":") ?? [];
@@ -58,6 +62,7 @@ export function externalFulfillment(
 				? amazonOrderLink(id)
 				: "https://sellercentral.amazon.com/orders-v3",
 			why: null,
+			formUrl: id ? `${amazonOrderLink(id)}/buy-shipping` : null,
 		};
 	}
 	if (source === "shopify") {
@@ -65,6 +70,7 @@ export function externalFulfillment(
 			name: "Shopify",
 			url: shopifyOrderLink(order.externalId),
 			why: "International order: Shopify Markets handles customs only on a Shopify Shipping label.",
+			formUrl: null,
 		};
 	}
 	return null;

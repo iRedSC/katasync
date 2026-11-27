@@ -8,12 +8,17 @@ export const ounces = (grams: number) => (grams / GRAMS_PER_OUNCE).toFixed(1);
 export const size = (d: Dims) =>
 	`${inches(d.lengthMm)} × ${inches(d.widthMm)} × ${inches(d.heightMm)}`;
 
-// Packed weight as Seller Central takes it, pounds and ounces.
-export function poundsOunces(grams: number) {
+// Packed weight as Seller Central takes it: whole pounds, and the ounces
+// left over to a tenth.
+export function lbOz(grams: number) {
 	const oz = Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10;
 	const lb = Math.floor(oz / 16);
-	const rest = Math.round((oz - lb * 16) * 10) / 10;
-	return lb > 0 ? `${lb} lb${rest > 0 ? ` ${rest} oz` : ""}` : `${rest} oz`;
+	return { lb, oz: Math.round((oz - lb * 16) * 10) / 10 };
+}
+
+export function poundsOunces(grams: number) {
+	const { lb, oz } = lbOz(grams);
+	return lb > 0 ? `${lb} lb${oz > 0 ? ` ${oz} oz` : ""}` : `${oz} oz`;
 }
 
 export const formatBox = (box: [number, number, number]) =>

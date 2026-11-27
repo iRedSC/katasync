@@ -32,7 +32,10 @@ export function stepsFor({
 	count: number;
 }): StepItem[] {
 	const external = found?.external ?? null;
-	return external
+	// Its form takes the box packed here: the box and weight steps run, and
+	// the service is chosen there.
+	const handsOff = external?.formUrl ? external : null;
+	return external && !handsOff
 		? [
 				{ id: "pin", label: "Order", value: found?.order.name ?? null },
 				{ id: "package", label: "Ship on", value: external.name },
@@ -64,7 +67,13 @@ export function stepsFor({
 							: `${ounces(weightGrams)} oz`
 						: null,
 				},
-				{ id: "rates", label: "Service", value: bought?.serviceName ?? null },
+				handsOff
+					? { id: "rates", label: "Ship on", value: handsOff.name }
+					: {
+							id: "rates",
+							label: "Service",
+							value: bought?.serviceName ?? null,
+						},
 			];
 }
 
