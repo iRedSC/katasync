@@ -121,10 +121,15 @@ export function labelPrice(price: string) {
 	return value;
 }
 
+// A service ID TikTok lists twice keeps its first price, the one buying
+// checks against (tiktokBuyLabel), so the screen never shows a cheaper one.
 function toRate(
 	s: NonNullable<(typeof servicesData.infer)["shipping_services"]>,
 ) {
-	return s.map((r) => ({
+	const firsts = s.filter(
+		(r, i) => s.findIndex((other) => other.id === r.id) === i,
+	);
+	return firsts.map((r) => ({
 		id: r.id,
 		carrier: r.shipping_provider_name ?? "TikTok",
 		// The name, not the ID, so quick ship's "picked this last time" ranking
