@@ -9,7 +9,12 @@ vi.mock("#/channels/tiktok", async (actual) => ({
 import { TiktokError, tiktokApi } from "#/channels/tiktok";
 import { LabelRefused } from "./label-attempt-state";
 import { PRICE_ROSE } from "./price-check";
-import { labelPrice, tiktokBuyLabel, tiktokShipPackage } from "./tiktok";
+import {
+	labelPrice,
+	tiktokBuyLabel,
+	tiktokRates,
+	tiktokShipPackage,
+} from "./tiktok";
 
 const parcel = {
 	lengthMm: 300,
@@ -121,6 +126,35 @@ describe("tiktokBuyLabel", () => {
 		// Exactly the shown price, to the cent, still buys.
 		await expect(
 			tiktokBuyLabel(["577"], parcel, "svc-1", ["u1"], 6.1),
+		).resolves.toMatchObject({ packageId: "x" });
+	});
+
+	test("a service listed twice shows the price buying checks against", async () => {
+		vi.mocked(tiktokApi).mockImplementation(async (path) => {
+			if (path?.endsWith("/shipping_services/query")) {
+				return {
+					shipping_services: [
+						{ id: "svc-1", name: "Ground", price: "$9.00" },
+						{ id: "svc-1", name: "Ground", price: "$7.00" },
+					],
+				};
+			}
+			if (path === "/fulfillment/202309/packages") return { package_id: "x" };
+			return {
+				orders: [
+					{
+						id: "577",
+						status: "AWAITING_SHIPMENT",
+						line_items: [{ id: "u1" }],
+					},
+				],
+			};
+		});
+		const rates = await tiktokRates("577", parcel);
+		expect(rates.map((r) => r.cost)).toEqual([9]);
+		const [shown] = rates;
+		await expect(
+			tiktokBuyLabel(["577"], parcel, "svc-1", ["u1"], shown.cost),
 		).resolves.toMatchObject({ packageId: "x" });
 	});
 
