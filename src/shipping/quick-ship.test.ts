@@ -102,10 +102,13 @@ describe("externalFulfillment", () => {
 				marketplaceOrderId: "amazon:111-2557110-8817016",
 				externalId: "111-2557110-8817016",
 				shipCountry: "US",
-			})?.url,
-		).toBe(
-			"https://sellercentral.amazon.com/orders-v3/order/111-2557110-8817016",
-		);
+			}),
+		).toMatchObject({
+			url: "https://sellercentral.amazon.com/orders-v3/order/111-2557110-8817016",
+			// Quick ship hands its Buy Shipping form the packed box.
+			formUrl:
+				"https://sellercentral.amazon.com/orders-v3/order/111-2557110-8817016/buy-shipping",
+		});
 		// TikTok labels are bought in katasync now.
 		expect(
 			externalFulfillment({

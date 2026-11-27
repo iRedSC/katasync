@@ -1,0 +1,15 @@
+{
+	"manifest_version": 3,
+	"name": "katasync: Amazon Buy Shipping",
+	"version": "0.1.0",
+	"description": "Fills Seller Central's Buy Shipping form with the box and weight packed in katasync's quick ship.",
+	"content_scripts": [
+		{
+			"matches": [
+				"https://sellercentral.amazon.com/orders-v3/order/*/buy-shipping*"
+			],
+			"js": ["content.js"],
+			"run_at": "document_start"
+		}
+	]
+}

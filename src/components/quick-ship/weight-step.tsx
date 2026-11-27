@@ -17,7 +17,9 @@ export function WeightStep({
 	moreBoxes: boolean;
 	onDraft: (grams: number | null) => void;
 	onSubmit: (grams: number) => void;
-	onAnother: (grams: number) => void;
+	// Absent when the label's form takes one box: + does nothing and isn't
+	// offered.
+	onAnother?: (grams: number) => void;
 }) {
 	// The mass is kept in grams. The text and unit only show it, so switching
 	// units reformats the same mass and never changes what's submitted.
@@ -76,7 +78,7 @@ export function WeightStep({
 						// + finishes this box and starts another.
 						if (e.key === "+" || e.key === "=") {
 							e.preventDefault();
-							if (mass) onAnother(mass);
+							if (mass) onAnother?.(mass);
 						}
 					}}
 					className={cn(bigInput, "pr-24 placeholder:text-line")}
@@ -90,10 +92,15 @@ export function WeightStep({
 				</button>
 			</div>
 			<p className="text-center text-muted-foreground">
-				<Key>Tab</Key> switches to {unit === "oz" ? "pounds" : "ounces"} ·{" "}
-				<span className={cn(moreBoxes && "font-semibold text-foreground")}>
-					<Key>+</Key> another box
-				</span>
+				<Key>Tab</Key> switches to {unit === "oz" ? "pounds" : "ounces"}
+				{onAnother && (
+					<>
+						{" · "}
+						<span className={cn(moreBoxes && "font-semibold text-foreground")}>
+							<Key>+</Key> another box
+						</span>
+					</>
+				)}
 			</p>
 		</div>
 	);

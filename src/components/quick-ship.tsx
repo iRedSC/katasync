@@ -1,6 +1,8 @@
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { packageFormUrl } from "#/components/quick-ship/amazon-form";
 import { buyRequest } from "#/components/quick-ship/buy-request";
 import { MAX_BOXES } from "#/components/quick-ship/constants";
+import { dialogKeys } from "#/components/quick-ship/dialog-keys";
 import { DoneStep } from "#/components/quick-ship/done-step";
 import { ExternalStep } from "#/components/quick-ship/external-step";
 import { type HazmatChoice, hazmatFor } from "#/components/quick-ship/hazmat";
@@ -75,6 +77,13 @@ export function QuickShip() {
 	const [dims, setDims] = useState<Dims | null>(null);
 	const [hazmatChoice, setHazmatChoice] = useState<HazmatChoice | null>(null);
 	const hazmat = hazmatFor(plan, packed.length, hazmatChoice);
+	// Where the label is bought when it isn't here, and that marketplace's
+	// form when it takes the box packed here: then the box and weight steps
+	// run, and Enter on the weight opens the form with them.
+	const external = found?.external ?? null;
+	const formUrl = external?.formUrl ?? null;
+	// A marketplace katasync hands nothing to: the pin only links to it.
+	const outside = external && !formUrl ? external : null;
 	// Ctrl+D on the box step: these boxes replace the default for these
 	// contents. Otherwise a box other than the default is a one-off.
 	const [newDefault, setNewDefault] = useState(false);
@@ -145,7 +154,8 @@ export function QuickShip() {
 	// extras the service step will show.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: priceFor reads the same state
 	useEffect(() => {
-		if (step !== "weight" || !draftGrams || !plan) return;
+		// The marketplace's form prices its own label.
+		if (step !== "weight" || !draftGrams || !plan || formUrl) return;
 		const timer = setTimeout(() => {
 			priceFor(allBoxes(draftGrams), extras)?.catch(() => {});
 		}, 250);
@@ -282,6 +292,15 @@ export function QuickShip() {
 
 	function chooseWeight(grams: number) {
 		if (!plan) return;
+		if (formUrl) {
+			if (!dims) return;
+			window.open(
+				packageFormUrl(formUrl, { dims, weightGrams: grams, hazmat }),
+				"_blank",
+				"noreferrer",
+			);
+			return setOpen(false);
+		}
 		setWeightGrams(grams);
 		showRates(allBoxes(grams), extras);
 	}
@@ -371,7 +390,6 @@ export function QuickShip() {
 		printLabels(result.boxes.map((b) => b.id));
 	}
 
-	const external = found?.external ?? null;
 	const count = packed.length + (dims ? 1 : 0);
 	const lastHere =
 		plan && dims ? lastFor(plan, packed.length, box, dims) : null;
@@ -403,36 +421,14 @@ export function QuickShip() {
 				// Scrolls inside, so the info panel can sit outside its edge.
 				className="grid-cols-[minmax(0,1fr)] gap-0 bg-card p-0 sm:max-w-2xl"
 				showCloseButton={false}
-				onKeyDown={(e: KeyboardEvent) => {
-					// An Enter typed in a field finishes that step only. Without this,
-					// the same keypress lands on the next step's button and presses it.
-					if (e.key === "Enter" && e.target instanceof HTMLInputElement) {
-						e.preventDefault();
-					}
-					if (e.key === "Escape") {
-						e.preventDefault();
-						back();
-					}
-					// Ctrl, not a letter: the box step types box names. Also keeps
-					// the browser's history page from opening.
-					if (e.ctrlKey && e.key.toLowerCase() === "h" && step === "package") {
-						e.preventDefault();
-						toggleHazmat();
-					}
-					if (e.ctrlKey && e.key.toLowerCase() === "d" && step === "package") {
-						e.preventDefault();
-						toggleNewDefault();
-					}
-					if (
-						// Tab, not a letter: the box step types box names.
-						e.key === "Tab" &&
-						step === "package" &&
-						found?.companions.length
-					) {
-						e.preventDefault();
-						toggleCompanion();
-					}
-				}}
+				onKeyDown={dialogKeys({
+					step,
+					back,
+					toggleHazmat,
+					toggleNewDefault,
+					toggleCompanion,
+					companions: found?.companions.length ?? 0,
+				})}
 				onEscapeKeyDown={(e) => e.preventDefault()}
 			>
 				<DialogTitle className="sr-only">Quick ship</DialogTitle>
@@ -456,12 +452,12 @@ export function QuickShip() {
 							<PinStep busy={busy} lookUp={lookUp} onSubmit={choosePin} />
 						)}
 
-						{step === "package" && external && (
+						{step === "package" && outside && (
 							<ExternalStep
-								name={external.name}
-								why={external.why}
+								name={outside.name}
+								why={outside.why}
 								onOpen={() => {
-									window.open(external.url, "_blank", "noreferrer");
+									window.open(outside.url, "_blank", "noreferrer");
 									setOpen(false);
 								}}
 							/>
@@ -469,7 +465,7 @@ export function QuickShip() {
 
 						{step === "package" &&
 							found &&
-							!external &&
+							!outside &&
 							found.liveDispatchId !== null && (
 								<Notice tone="info">
 									Already labeled. Void it on the order page to change boxes.
@@ -478,7 +474,7 @@ export function QuickShip() {
 
 						{step === "package" &&
 							found &&
-							!external &&
+							!outside &&
 							found.liveDispatchId === null && (
 								<PackageStep
 									// A fresh step for each box, and again when orders join or
@@ -492,8 +488,9 @@ export function QuickShip() {
 									hazmat={hazmat}
 									onHazmat={toggleHazmat}
 									defaultBox={plan?.last?.[packed.length] ?? null}
-									// Nothing to replace when these contents never shipped.
-									newDefault={plan?.last ? newDefault : null}
+									// Nothing to replace when these contents never shipped, and
+									// nothing kept when the label is bought elsewhere.
+									newDefault={plan?.last && !formUrl ? newDefault : null}
 									onNewDefault={toggleNewDefault}
 									// Through the ref: saving a custom box finishes later, and
 									// must reach the current choosePackage, not this render's,
@@ -520,7 +517,8 @@ export function QuickShip() {
 								moreBoxes={(plan?.last?.length ?? 0) > packed.length + 1}
 								onDraft={setDraftGrams}
 								onSubmit={chooseWeight}
-								onAnother={anotherBox}
+								// The marketplace's form takes one box.
+								onAnother={formUrl ? undefined : anotherBox}
 							/>
 						)}
 
